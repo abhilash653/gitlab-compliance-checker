@@ -541,7 +541,7 @@ if mode == "Check Project Compliance":
                             "CONTRIBUTING.md": "CONTRIBUTING.md",
                             "CHANGELOG": "CHANGELOG / CHANGELOG.md",
                             "LICENSE": "LICENSE / LICENSE.md",
-                            "license_valid": "LICENSE is AGPLv3",
+                            "license_valid": "LICENSE should be AGPLv3",
                             "issue_templates_folder": "Issue Templates Folder (.gitlab/issue_templates)",
                             "issue_template_files": "Issue Template Files",
                             "merge_request_templates_folder": "Merge Request Templates Folder (.gitlab/merge_request_templates)",
@@ -587,12 +587,12 @@ if mode == "Check Project Compliance":
                                         st.markdown("✅ **LICENSE is AGPLv3**")
                                     elif license_status == "gnu_other":
                                         st.markdown(
-                                            "🟠 **LICENSE is AGPLv3** — GNU license found (e.g., GPLv3/LGPLv3) but not AGPLv3"
+                                            "🟠 **LICENSE should be AGPLv3** — GNU license found (e.g., GPLv3/LGPLv3) but not AGPLv3"
                                         )
                                         all_passed = False
                                     else:
                                         st.markdown(
-                                            "❌ **LICENSE is AGPLv3** — License is non-GNU (e.g., MIT/Apache) or missing"
+                                            "❌ **LICENSE should be AGPLv3** — License is non-GNU (e.g., MIT/Apache) or missing"
                                         )
                                         all_passed = False
 
