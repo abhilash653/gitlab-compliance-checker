@@ -35,7 +35,7 @@ def check_vscode_file_exists(project, filename, branch="main"):
 
 
 def check_license_content(project, branch="main"):
-    """Check if license is AGPLv3, other GNU, or invalid"""
+    """Check if license is AGPLv3, other GNU, or invalid using official headers and dates"""
     content = read_file_content(project, "LICENSE", branch) or read_file_content(
         project, "LICENSE.md", branch
     )
@@ -45,29 +45,41 @@ def check_license_content(project, branch="main"):
     # Normalize: lowercase, single spaces
     cleaned = " ".join(content.strip().split()).lower()
 
-    # Check for AGPLv3 specifically first
+    # --- Check for AGPLv3 using official header and date ---
     has_affero = "affero" in cleaned
-    has_gpl = "gpl" in cleaned or "general public license" in cleaned
+    has_gpl = "general public license" in cleaned
     has_version_3 = "version 3" in cleaned or "v3" in cleaned or "3.0" in cleaned
+    has_correct_agpl_date = "19 november 2007" in cleaned
 
-    # Strong AGPLv3 indicators
-    if has_affero and has_gpl and has_version_3:
-        return "valid"  # ✅ AGPLv3
+    # ✅ Only if ALL AGPLv3 criteria match
+    if has_affero and has_gpl and has_version_3 and has_correct_agpl_date:
+        return "valid"  # ✅ True AGPLv3
 
-    # Check for other GNU licenses (GPLv3, LGPLv3, GPLv2, etc.)
-    # Look for GNU patterns but exclude AGPL
+    # --- Check for GPLv3 using its official date ---
+    has_correct_gplv3_date = "29 june 2007" in cleaned
+    is_gplv3 = has_gpl and has_version_3 and has_correct_gplv3_date and not has_affero
+
+    # --- Check for LGPLv3 ---
+    has_lgpl = "lgpl" in cleaned or "lesser general public license" in cleaned
+    has_correct_lgpl_date = "29 june 2007" in cleaned  # LGPLv3 also uses same date
+    is_lgplv3 = has_lgpl and has_version_3 and has_correct_lgpl_date
+
+    # 🟡 Other GNU licenses (GPLv3, LGPLv3)
+    if is_gplv3 or is_lgplv3:
+        return "gnu_other"
+
+    # --- Check for other GNU licenses without version 3 ---
     has_gnu = "gnu" in cleaned
-    has_lgpl = "lgpl" in cleaned or "lesser general public license" in cleaned or "library general public license" in cleaned
     has_gpl_v2 = "version 2" in cleaned or "v2" in cleaned or "2.0" in cleaned
-    has_gpl_general = has_gpl and not has_affero  # GPL but not AGPL
+    has_lgpl_v2 = ("lgpl" in cleaned or "lesser general public license" in cleaned) and has_gpl_v2
+    has_gpl_general = has_gpl and not has_affero  # Any GPL that isn't AGPL
 
-    # Check for various GNU licenses
     if (has_gnu and has_gpl_general and (has_version_3 or has_gpl_v2)) or \
        (has_lgpl and (has_version_3 or has_gpl_v2)) or \
        (has_gpl_general and (has_version_3 or has_gpl_v2)):
-        return "gnu_other"  # 🟡 Other GNU license
+        return "gnu_other"
 
-    # Common non-GNU licenses
+    # --- Common non-GNU licenses ---
     non_gnu_licenses = [
         "mit license", "apache license", "apache 2.0", "bsd license",
         "unlicense", "zlib", "isc license", "mozilla public license",
@@ -77,11 +89,11 @@ def check_license_content(project, branch="main"):
     if any(phrase in cleaned for phrase in non_gnu_licenses):
         return "invalid"
 
-    # If it contains license text but we can't identify the type
+    # --- Fallback: generic license detection ---
     if "license" in cleaned and "copyright" in cleaned:
-        # Check if it mentions GPL/GNU but we couldn't categorize it properly
-        if has_gnu or has_gpl:
-            return "gnu_other"  # Assume it's some GNU variant we didn't catch
+        # If it mentions GNU/GPL but didn't match above (e.g., malformed)
+        if has_gnu or has_gpl or has_lgpl:
+            return "gnu_other"
         return "invalid"
 
     return "invalid"
