@@ -209,86 +209,66 @@ def get_suggestions_for_missing_items(report):
     suggestion_list = [
         (
             "README.md",
-            "README.md missing",
             "Add a `README.md` file at the root of the repository with setup and usage instructions.",
         ),
         (
             "CONTRIBUTING.md",
-            "CONTRIBUTING.md missing",
             "Add a `CONTRIBUTING.md` file to guide collaborators on how to contribute to the project.",
         ),
         (
             "CHANGELOG",
-            "CHANGELOG missing",
             "Maintain a `CHANGELOG.md` file to record changes across versions for better transparency.",
         ),
         (
             "LICENSE",
-            "LICENSE missing",
-            "Include an `AGPLv3 LICENSE` file to define the legal usage of your project.",
+            "Include a `AGPLv3 LICENSE` file to define the legal usage of your project.",
         ),
         (
             "license_valid",
-            "LICENSE is not AGPLv3",
             "Ensure the license is AGPLv3. Replace MIT/Apache with AGPLv3 for compliance.",
         ),
         (
             "issue_templates_folder",
-            "Issue templates folder missing",
             "Create `.gitlab/issue_templates/` and add `.md` templates like `Bug.md`, `Documentation.md`, or `Default.md`.",
         ),
         (
             "merge_request_templates_folder",
-            "Merge request templates folder missing",
             "Create `.gitlab/merge_request_templates/` and add MR templates like `Bug.md`, `Documentation.md`, or `Default.md`.",
         ),
         (
             ".gitignore",
-            ".gitignore missing",
             "Add a `.gitignore` file to specify untracked files to ignore in your repository.",
         ),
         (
             "pyproject.toml",
-            "pyproject.toml missing",
             "Add a `pyproject.toml` file to declare Python build system requirements and project metadata.",
         ),
         (
-            "vscode_settings",
-            ".vscode/settings.json missing",
+            ".vscode/settings.json",
             "Add a `.vscode/settings.json` file to configure editor settings for consistency across contributors.",
         ),
         (
             "vscode_have_ruff",
-            "Ruff not configured in .vscode/settings.json",
-            "Ensure `.vscode/settings.json` includes Ruff as the linter and make sure you are following correct JSON format.",
+            "Ensure `.vscode/settings.json` includes Ruff as the linter and make sure you are following correct json format.",
         ),
         (
             "vscode_extensions_exists",
-            ".vscode/extensions.json missing",
             "Add a `.vscode/extensions.json` file to configure recommended VSCode extensions.",
         ),
         (
             "vscode_launch_exists",
-            ".vscode/launch.json missing",
             "Add a `.vscode/launch.json` file to configure debug launch profiles in VSCode.",
         ),
         (
             "vscode_tasks_exists",
-            ".vscode/tasks.json missing",
             "Add a `.vscode/tasks.json` file to define custom tasks for build, lint, or deployment.",
         ),
         (
             "description_present",
-            "Project description missing",
             "Provide a meaningful project description in GitLab settings.",
         ),
-        (
-            "tags_present",
-            "Project tags missing",
-            "Tag your project releases for version control and clarity.",
-        ),
+        ("tags_present", "Tag your project releases for version control and clarity."),
     ]
-
     image_map = {
         "README.md": "Readme.png",
         "CONTRIBUTING.md": "Contributing.png",
@@ -299,7 +279,7 @@ def get_suggestions_for_missing_items(report):
         "merge_request_templates_folder": "merge_request_files.png",
         ".gitignore": "gitignore.png",
         "pyproject.toml": "pyproject-toml.png",
-        "vscode_settings": "vscode-settings.png",
+        ".vscode/settings.json": "vscode-settings.png",
         "vscode_have_ruff": "vscode-ruff.png",
         "vscode_extensions_exists": "vscode-extensions.png",
         "vscode_launch_exists": "vscode-launch.png",
@@ -315,7 +295,7 @@ def get_suggestions_for_missing_items(report):
     ) or not report.get("merge_request_templates_folder", False)
     files_image_shown = False
 
-    for key, display_name, suggestion_text in suggestion_list:
+    for key, suggestion_text in suggestion_list:
         if not report.get(key, True):  # If missing
             if (
                 key in ["issue_templates_folder", "merge_request_templates_folder"]
@@ -332,7 +312,7 @@ def get_suggestions_for_missing_items(report):
                 except Exception:
                     st.warning("Could not load: assets/files.png")
 
-            st.markdown(f"❌ **{display_name}** — {suggestion_text}")
+            st.markdown(f"❌ **{key}** — {suggestion_text}")
 
             img_file = image_map.get(key)
             if img_file:
@@ -495,7 +475,7 @@ if mode == "Check Project Compliance":
                             ".gitignore": ".gitignore",
                             "pyproject.toml": "pyproject.toml",
                             "vscode_settings": ".vscode/settings.json",
-                            "vscode_have_ruff": ".vscode/settings.json has Ruff",
+                            "vscode_have_ruff": ".vscode/settings.json have Ruff",
                             "vscode_extensions_exists": ".vscode/extensions.json",
                             "vscode_launch_exists": ".vscode/launch.json",
                             "vscode_tasks_exists": ".vscode/tasks.json",
@@ -515,7 +495,7 @@ if mode == "Check Project Compliance":
                                 # === Special handling for Ruff linter presence ===
                                 if key == "vscode_have_ruff":
                                     if status:
-                                        st.markdown("✅ .vscode/settings.json has Ruff")
+                                        st.markdown("✅ .vscode/settings.json have Ruff")
                                     else:
                                         st.markdown("❌ .vscode/settings.json doesn't have Ruff")
                                     if not status:
@@ -550,13 +530,19 @@ if mode == "Check Project Compliance":
                                     if not status:
                                         all_passed = False
 
-                    # No need to prepare updated report - use original report keys
+                    # Prepare updated report for suggestions
+                    updated_report = report.copy()
+                    if "vscode_settings" in updated_report:
+                        updated_report[".vscode/settings.json"] = updated_report.pop(
+                            "vscode_settings"
+                        )
+
                     if all_passed:
                         st.success(
                             "🎉 **All Set!** Your project meets all compliance requirements."
                         )
                     else:
-                        get_suggestions_for_missing_items(report)
+                        get_suggestions_for_missing_items(updated_report)
 
                     # --- New Section: Conditional Documentation ---
                     docs_map = {
@@ -564,7 +550,7 @@ if mode == "Check Project Compliance":
 - [`pyproject.toml`](https://packaging.python.org/en/latest/guides/writing-pyproject-toml/)
   Configuration for Python project build system, dependencies, and packaging metadata. Ensures reproducible builds and integration with tools like Poetry or Flit.
 """,
-                        "vscode_settings": """
+                        ".vscode/settings.json": """
 - [`.vscode/settings.json`](https://code.visualstudio.com/docs/getstarted/settings)
   Contains workspace-specific editor settings such as Python interpreter path, linters (e.g., Ruff), and environment management.
 """,
@@ -588,7 +574,7 @@ if mode == "Check Project Compliance":
 
                     relevant_keys = [
                         "pyproject.toml",
-                        "vscode_settings",
+                        ".vscode/settings.json",
                         "vscode_have_ruff",
                         "vscode_extensions_exists",
                         "vscode_launch_exists",
@@ -596,7 +582,7 @@ if mode == "Check Project Compliance":
                     ]
 
                     missing_keys = [
-                        k for k in relevant_keys if not report.get(k, False)
+                        k for k in relevant_keys if not updated_report.get(k, False)
                     ]
 
                     if missing_keys:
@@ -616,7 +602,7 @@ if mode == "Check Project Compliance":
 
 # ---------- MODE: User Profile README ----------
 elif mode == "Check User Profile README":
-    st.subheader("✅ Check if user has a project named after them with README.md")
+    st.subheader("✅ Check if user have a project named after them with README.md")
 
     user_input = st.text_input(
         "Enter GitLab username, user ID, or user profile URL",
@@ -681,7 +667,7 @@ elif mode == "Check User Profile README":
                         )
                         return False, None
 
-                has_readme, project = check_user_profile_readme(gl, user)
+                have_readme, project = check_user_profile_readme(gl, user)
                 st.write(f"User: **{user.name}** (@{user.username}, ID: {user.id})")
 
                 if project is None:
@@ -703,10 +689,10 @@ elif mode == "Check User Profile README":
                         )
                     except Exception:
                         pass
-                elif has_readme:
+                elif have_readme:
                     branch = getattr(project, "default_branch", "main")
                     st.success(
-                        f"✅ Project '{project.path_with_namespace}' has a README.md"
+                        f"✅ Project '{project.path_with_namespace}' have a README.md"
                     )
                     domain = urlparse(URL).netloc
                     url = f"https://{domain}/{project.path_with_namespace}/-/blob/{branch}/README.md"
