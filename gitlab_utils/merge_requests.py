@@ -1,13 +1,26 @@
-def get_user_mrs(client, user_id):
+def get_user_mrs(client, user_id, start_date=None, end_date=None):
     """
     Fetch Merge Requests:
     - Authored MRs (GET /merge_requests?author_id=:id)
     - Assigned MRs (GET /merge_requests?assignee_id=:id)
 
+    Args:
+        client: GitLab client instance
+        user_id: GitLab user ID
+        start_date: Optional date filter (date object or string)
+        end_date: Optional date filter (date object or string)
+
     Returns:
       - mrs_list: List of MR dicts
       - stats: Dict {total, merged, closed, opened, pending}
     """
+    # Parse dates if provided
+    from datetime import datetime
+    if isinstance(start_date, str):
+        start_date = datetime.fromisoformat(start_date).date()
+    if isinstance(end_date, str):
+        end_date = datetime.fromisoformat(end_date).date()
+    
     mrs_list = []
     seen_ids = set()
 
@@ -25,6 +38,21 @@ def get_user_mrs(client, user_id):
             items = client._get_paginated("/merge_requests", params=params, per_page=50, max_pages=10)
             for item in items:
                 if item['id'] not in seen_ids:
+                    # Date range filtering
+                    created_at_str = item.get("created_at")
+                    if created_at_str:
+                        try:
+                            from datetime import timezone
+                            dt = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+                            mr_date = dt.date()
+                            
+                            if start_date and mr_date < start_date:
+                                continue
+                            if end_date and mr_date > end_date:
+                                continue
+                        except Exception:
+                            pass
+                    
                     state = item.get("state") # opened, closed, merged, locked
 
                     mrs_list.append({
@@ -32,7 +60,7 @@ def get_user_mrs(client, user_id):
                         "project_id": item.get("project_id"),
                         "web_url": item.get("web_url"),
                         "state": state,
-                        "created_at": item.get("created_at"),
+                        "created_at": created_at_str,
                         "role": role_label
                     })
                     seen_ids.add(item['id'])

@@ -180,16 +180,30 @@ def render_user_profile(client, simple_user_info):
 
     # --- End Contribution Analytics ---
 
-    # Fetch Data
-    with st.spinner("Fetching comprehensive user data..."):
-        # 1. Projects
-        proj_data = projects.get_user_projects(client, user_id, username)
+    # Cache keys for data (include date range to refresh when dates change)
+    cache_key_projects = f"projects_{user_id}"
+    cache_key_commits = f"commits_{user_id}_{start_date}_{end_date}"
+    cache_key_mrs = f"mrs_{user_id}_{start_date}_{end_date}"
+    cache_key_issues = f"issues_{user_id}_{start_date}_{end_date}"
 
-        # 2. Commits - Passing full simple_user_info
-        all_projs = proj_data["all"]
-        all_commits, commit_counts, commit_stats = commits.get_user_commits(
-            client, simple_user_info, all_projs
-        )
+    # Fetch Data
+    with st.spinner(f"Fetching data from {start_date} to {end_date}..."):
+        # 1. Projects (not date filtered - always lifetime)
+        if cache_key_projects not in st.session_state:
+            proj_data = projects.get_user_projects(client, user_id, username)
+            st.session_state[cache_key_projects] = proj_data
+        else:
+            proj_data = st.session_state[cache_key_projects]
+
+        # 2. Commits with date filtering
+        if cache_key_commits not in st.session_state:
+            all_projs = proj_data["all"]
+            all_commits, commit_counts, commit_stats = commits.get_user_commits(
+                client, simple_user_info, all_projs, start_date, end_date
+            )
+            st.session_state[cache_key_commits] = (all_commits, commit_counts, commit_stats)
+        else:
+            all_commits, commit_counts, commit_stats = st.session_state[cache_key_commits]
 
         verified_contributed = []
         for p in proj_data["contributed"]:
@@ -198,14 +212,27 @@ def render_user_profile(client, simple_user_info):
 
         personal_projects = proj_data["personal"]
 
-        # 3. Groups
-        user_groups = groups.get_user_groups(client, user_id)
+        # 3. Groups (not date filtered)
+        cache_key_groups = f"groups_{user_id}"
+        if cache_key_groups not in st.session_state:
+            user_groups = groups.get_user_groups(client, user_id)
+            st.session_state[cache_key_groups] = user_groups
+        else:
+            user_groups = st.session_state[cache_key_groups]
 
-        # 4. MRs
-        user_mrs, mr_stats = merge_requests.get_user_mrs(client, user_id)
+        # 4. MRs with date filtering
+        if cache_key_mrs not in st.session_state:
+            user_mrs, mr_stats = merge_requests.get_user_mrs(client, user_id, start_date, end_date)
+            st.session_state[cache_key_mrs] = (user_mrs, mr_stats)
+        else:
+            user_mrs, mr_stats = st.session_state[cache_key_mrs]
 
-        # 5. Issues
-        user_issues, issue_stats = issues.get_user_issues(client, user_id)
+        # 5. Issues with date filtering
+        if cache_key_issues not in st.session_state:
+            user_issues, issue_stats = issues.get_user_issues(client, user_id, start_date, end_date)
+            st.session_state[cache_key_issues] = (user_issues, issue_stats)
+        else:
+            user_issues, issue_stats = st.session_state[cache_key_issues]
 
     # --- Display ---
 

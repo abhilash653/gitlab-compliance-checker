@@ -1,17 +1,30 @@
 from datetime import datetime, timezone, timedelta
 import dateutil.parser
 
-def get_user_commits(client, user, projects):
+def get_user_commits(client, user, projects, start_date=None, end_date=None):
     """
     Fetches commits for a user across given projects.
     Filters by author name/email because GitLab repository commits API
     does not support author_id reliably.
+
+    Args:
+        client: GitLab client instance
+        user: User dict with name, email, username
+        projects: List of project dicts
+        start_date: Optional date filter (date object or string)
+        end_date: Optional date filter (date object or string)
 
     Returns:
       - all_commits: List of unique commit dicts
       - project_commit_counts: Dict {project_id: count}
       - stats: Dict {morning_commits, afternoon_commits, total}
     """
+    # Parse dates if provided
+    from datetime import date as date_type
+    if isinstance(start_date, str):
+        start_date = datetime.fromisoformat(start_date).date()
+    if isinstance(end_date, str):
+        end_date = datetime.fromisoformat(end_date).date()
     all_commits = []
     project_commit_counts = {}
     seen_shas = set()
@@ -83,6 +96,14 @@ def get_user_commits(client, user, projects):
                         dt_utc = dateutil.parser.isoparse(created_at_str)
                         dt_ist = dt_utc.replace(tzinfo=timezone.utc).astimezone(ist)
 
+                        commit_date = dt_ist.date()
+                        
+                        # Date range filtering
+                        if start_date and commit_date < start_date:
+                            continue
+                        if end_date and commit_date > end_date:
+                            continue
+                        
                         date_str = dt_ist.strftime("%Y-%m-%d")
                         time_str = dt_ist.strftime("%I:%M %p")
                         t_obj = dt_ist.time()
