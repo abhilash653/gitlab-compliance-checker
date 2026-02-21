@@ -169,6 +169,33 @@ def render_user_profile(client, simple_user_info):
             st.markdown("### Daily Contribution Activity")
             st.line_chart(chart_data.set_index("Date"), height=250)
 
+        # ==============================================
+        # ✅ 1️⃣ CONSISTENCY INDEX
+        # ==============================================
+        st.markdown("---")
+        st.markdown("### 📈 Consistency Index")
+
+        # Calculate consistency metrics
+        active_days = len(sorted_dates) if sorted_dates else 0
+        total_days = (end_date - start_date).days + 1
+        consistency_pct = (active_days / total_days * 100) if total_days > 0 else 0
+
+        # Determine consistency label
+        if consistency_pct >= 70:
+            consistency_label = "🔥 Highly Consistent"
+        elif consistency_pct >= 40:
+            consistency_label = "🟢 Moderately Consistent"
+        else:
+            consistency_label = "🟡 Low Consistency"
+
+        # Display metrics
+        c_idx1, c_idx2, c_idx3 = st.columns(3)
+        c_idx1.metric("Active Days", active_days)
+        c_idx2.metric("Total Days", total_days)
+        c_idx3.metric("Consistency %", f"{consistency_pct:.1f}%")
+
+        st.markdown(f"**Status:** {consistency_label}")
+
         # Display events in structured format
         st.markdown("### Contribution Details")
         with st.expander("View All Contributions", expanded=True):
@@ -269,6 +296,75 @@ def render_user_profile(client, simple_user_info):
             st.dataframe(
                 df_commits[["project_name", "message", "date", "time", "slot"]], width="stretch"
             )
+
+    # ==============================================
+    # ✅ 2️⃣ WORK STYLE DETECTOR
+    # ==============================================
+    st.markdown("---")
+    st.markdown("### 🧠 Work Style Detector")
+
+    # Calculate commit distribution by time slot
+    morning_count = commit_stats.get("morning_commits", 0)
+    afternoon_count = commit_stats.get("afternoon_commits", 0)
+    night_count = commit_stats.get("total", 0) - morning_count - afternoon_count
+
+    # Determine dominant work style
+    if morning_count > afternoon_count and morning_count > night_count:
+        work_style = "☀ Morning Developer"
+    elif afternoon_count > morning_count and afternoon_count > night_count:
+        work_style = "🌤 Afternoon Strategist"
+    elif night_count > morning_count and night_count > afternoon_count:
+        work_style = "🌙 Night Hacker"
+    else:
+        work_style = "⚖ Balanced Contributor"
+
+    # Display work style using st.info()
+    st.info(f"**Primary Work Style:** {work_style}")
+
+    # Show breakdown
+    ws_col1, ws_col2, ws_col3 = st.columns(3)
+    ws_col1.metric("Morning (9:30-12:30)", morning_count)
+    ws_col2.metric("Afternoon (2:00-5:00)", afternoon_count)
+    ws_col3.metric("Other (Night)", night_count)
+
+    # ==============================================
+    # ✅ 3️⃣ COLLABORATION INDEX
+    # ==============================================
+    st.markdown("---")
+    st.markdown("### 🤝 Collaboration Index")
+
+    # Calculate collaboration score
+    merged_mrs = mr_stats.get("merged", 0)
+    closed_issues = issue_stats.get("closed", 0)
+    # Count comments from events (use cached events if available)
+    comment_count = 0
+    if events_cache_key in st.session_state:
+        cached_events = st.session_state[events_cache_key]
+        comment_count = sum(1 for e in cached_events if e.get("action_name") == "commented")
+
+    raw_score = (merged_mrs * 5) + (closed_issues * 3) + (comment_count * 1)
+
+    # Normalize to percentage (max threshold = 200)
+    max_threshold = 200
+    collaboration_pct = min((raw_score / max_threshold * 100), 100)
+
+    # Determine collaboration label
+    if collaboration_pct >= 70:
+        collab_label = "🔥 Highly Collaborative"
+    elif collaboration_pct >= 40:
+        collab_label = "🟢 Moderately Collaborative"
+    else:
+        collab_label = "🟡 Limited Collaboration"
+
+    # Display metrics
+    collab_col1, collab_col2, collab_col3 = st.columns(3)
+    collab_col1.metric("Merged MRs", merged_mrs)
+    collab_col2.metric("Closed Issues", closed_issues)
+    collab_col3.metric("Comments", comment_count)
+
+    # Display progress bar
+    st.progress(collaboration_pct / 100)
+    st.markdown(f"**Collaboration Score:** {collaboration_pct:.1f}% - {collab_label}")
 
     # Groups
     st.markdown("---")
