@@ -1,6 +1,78 @@
-import streamlit as st
+from datetime import date, datetime, timedelta
+
 import pandas as pd
-from gitlab_utils import users, projects, commits, groups, merge_requests, issues
+import streamlit as st
+
+from gitlab_utils import commits, groups, issues, merge_requests, projects
+
+
+def get_user_events(client, user_id, start_date, end_date):
+    """
+    Fetch user events from GitLab API with date filtering.
+
+    Args:
+        client: GitLabClient instance
+        user_id: GitLab user ID
+        start_date: Start date for filtering (date object)
+        end_date: End date for filtering (date object)
+
+    Returns:
+        List of events within the date range
+    """
+    # Convert dates to ISO format (YYYY-MM-DD)
+    after_date = start_date.isoformat()
+    before_date = end_date.isoformat()
+
+    # Use the client's _get_paginated method to fetch events
+    # GitLab API: GET /users/:id/events
+    endpoint = f"/users/{user_id}/events"
+    params = {"after": after_date, "before": before_date, "per_page": 100}
+
+    try:
+        events = client._get_paginated(endpoint, params=params, per_page=100, max_pages=10)
+        return events if events else []
+    except Exception as e:
+        st.warning(f"Could not fetch events: {e}")
+        return []
+
+
+def process_events(events):
+    """
+    Process GitLab events to extract relevant fields.
+
+    Args:
+        events: List of event dictionaries from GitLab API
+
+    Returns:
+        List of processed event dictionaries
+    """
+    processed = []
+    for event in events or []:
+        created_at = event.get("created_at")
+        # Extract date from ISO timestamp
+        event_date = "-"
+        if created_at:
+            try:
+                # Parse ISO format and extract date
+                dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                event_date = dt.strftime("%Y-%m-%d")
+            except Exception:
+                event_date = "-"
+
+        processed.append(
+            {
+                "created_at": created_at or "-",
+                "date": event_date,
+                "action_name": event.get("action_name", "-"),
+                "target_type": event.get("target_type", "-"),
+                "project_name": event.get("project", {}).get("name", "-")
+                if event.get("project")
+                else "-",
+                "target_title": event.get("target_title", "-") or "-",
+            }
+        )
+    return processed
+
 
 def render_user_profile(client, simple_user_info):
     """
@@ -25,6 +97,89 @@ def render_user_profile(client, simple_user_info):
         st.markdown(f"### {name} (@{username})")
         st.markdown(f"**ID:** {user_id} | [GitLab Profile]({web_url})")
 
+    # --- Date Range Selection for Contribution Analytics ---
+    st.markdown("---")
+    st.subheader("📊 Contribution Analytics (Date Range)")
+
+    # Calculate default dates
+    today = date.today()
+    default_start = today - timedelta(days=30)
+
+    # Date input fields
+    date_col1, date_col2 = st.columns(2)
+    with date_col1:
+        start_date = st.date_input(
+            "Start Date",
+            value=default_start,
+            max_value=today,
+            help="Select the start date for contribution filtering",
+        )
+    with date_col2:
+        end_date = st.date_input(
+            "End Date",
+            value=today,
+            min_value=start_date,
+            max_value=today,
+            help="Select the end date for contribution filtering",
+        )
+
+    # Validate date range
+    if start_date > end_date:
+        st.error("❌ Error: Start Date cannot be after End Date. Please adjust the date range.")
+        return
+
+    # Cache key for events (to avoid duplicate API calls)
+    events_cache_key = f"events_{user_id}_{start_date}_{end_date}"
+
+    # Fetch events with date filtering
+    with st.spinner(f"Fetching contributions from {start_date} to {end_date}..."):
+        # Check if events are cached
+        if events_cache_key not in st.session_state:
+            events = get_user_events(client, user_id, start_date, end_date)
+            st.session_state[events_cache_key] = events
+        else:
+            events = st.session_state[events_cache_key]
+
+    # Process events
+    processed_events = process_events(events)
+
+    # Display events count and info
+    st.markdown(f"**Contributions found:** {len(processed_events)} events")
+
+    if not processed_events:
+        st.info(
+            f"ℹ️ No contributions found between {start_date} and {end_date}. Try selecting a different date range."
+        )
+    else:
+        # Aggregate events by date for chart
+        date_counts = {}
+        for event in processed_events:
+            event_date = event.get("date", "-")
+            if event_date and event_date != "-":
+                date_counts[event_date] = date_counts.get(event_date, 0) + 1
+
+        # Sort by date
+        sorted_dates = sorted(date_counts.keys())
+
+        # Display line chart for daily contribution activity
+        if sorted_dates:
+            chart_data = pd.DataFrame(
+                {"Date": sorted_dates, "Contributions": [date_counts[d] for d in sorted_dates]}
+            )
+            st.markdown("### Daily Contribution Activity")
+            st.line_chart(chart_data.set_index("Date"), height=250)
+
+        # Display events in structured format
+        st.markdown("### Contribution Details")
+        with st.expander("View All Contributions", expanded=True):
+            df_events = pd.DataFrame(processed_events)
+            # Display relevant columns
+            display_cols = ["date", "action_name", "target_type", "project_name", "target_title"]
+            available_cols = [col for col in display_cols if col in df_events.columns]
+            st.dataframe(df_events[available_cols], width="stretch", use_container_width=True)
+
+    # --- End Contribution Analytics ---
+
     # Fetch Data
     with st.spinner("Fetching comprehensive user data..."):
         # 1. Projects
@@ -32,12 +187,14 @@ def render_user_profile(client, simple_user_info):
 
         # 2. Commits - Passing full simple_user_info
         all_projs = proj_data["all"]
-        all_commits, commit_counts, commit_stats = commits.get_user_commits(client, simple_user_info, all_projs)
+        all_commits, commit_counts, commit_stats = commits.get_user_commits(
+            client, simple_user_info, all_projs
+        )
 
         verified_contributed = []
         for p in proj_data["contributed"]:
-             if commit_counts.get(p['id'], 0) > 0:
-                 verified_contributed.append(p)
+            if commit_counts.get(p["id"], 0) > 0:
+                verified_contributed.append(p)
 
         personal_projects = proj_data["personal"]
 
@@ -65,7 +222,7 @@ def render_user_profile(client, simple_user_info):
     with p_col2:
         st.metric("Contributed Projects", len(verified_contributed))
         if verified_contributed:
-             with st.expander("View Contributed Projects"):
+            with st.expander("View Contributed Projects"):
                 for p in verified_contributed:
                     st.write(f"- [{p['name_with_namespace']}]({p['web_url']})")
 
@@ -82,7 +239,9 @@ def render_user_profile(client, simple_user_info):
             # Use pandas for table
             df_commits = pd.DataFrame(all_commits)
             # Display updated columns
-            st.dataframe(df_commits[["project_name", "message", "date", "time", "slot"]], width="stretch")
+            st.dataframe(
+                df_commits[["project_name", "message", "date", "time", "slot"]], width="stretch"
+            )
 
     # Groups
     st.markdown("---")
