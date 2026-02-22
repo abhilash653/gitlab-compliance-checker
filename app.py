@@ -124,6 +124,12 @@ def main():
             from modes.contribution_mapping import render_team_mapping
             render_team_mapping(client)
 
+    elif mode == "Batch 2026 ICFAI":
+        render_batch_mode_ui(client, "ICFAI")
+
+    elif mode == "Batch 2026 RCTS":
+        render_batch_mode_ui(client, "RCTS")
+
 
 if __name__ == "__main__":
     main()
