@@ -37,16 +37,26 @@ def get_user_commits(client, user, projects, start_date=None, end_date=None):
     # Define IST timezone (+5:30)
     ist = timezone(timedelta(hours=5, minutes=30))
 
-    # Define slot boundary times for comparison
-    morn_start = datetime.strptime("09:30", "%H:%M").time()
-    morn_end = datetime.strptime("12:30", "%H:%M").time()
-    aft_start = datetime.strptime("14:00", "%H:%M").time()
-    aft_end = datetime.strptime("17:00", "%H:%M").time()
+    # Define slot boundary times for comparison (IST)
+    # Morning: 6 AM – 12 PM
+    # Afternoon: 12 PM – 6 PM
+    # Evening: 6 PM – 10 PM
+    # Night: 10 PM – 6 AM
+    morning_start = datetime.strptime("06:00", "%H:%M").time()
+    morning_end = datetime.strptime("12:00", "%H:%M").time()
+    afternoon_start = datetime.strptime("12:00", "%H:%M").time()
+    afternoon_end = datetime.strptime("18:00", "%H:%M").time()
+    evening_start = datetime.strptime("18:00", "%H:%M").time()
+    evening_end = datetime.strptime("22:00", "%H:%M").time()
+    night_start = datetime.strptime("22:00", "%H:%M").time()
+    night_end = datetime.strptime("06:00", "%H:%M").time()
 
     stats = {
         "total": 0,
-        "morning_commits": 0,   # 09:30 AM – 12:30 PM
-        "afternoon_commits": 0  # 02:00 PM – 05:00 PM
+        "morning_commits": 0,    # 06:00 AM – 12:00 PM
+        "afternoon_commits": 0, # 12:00 PM – 06:00 PM
+        "evening_commits": 0,   # 06:00 PM – 10:00 PM
+        "night_commits": 0      # 10:00 PM – 06:00 AM
     }
 
     for project in projects:
@@ -109,12 +119,18 @@ def get_user_commits(client, user, projects, start_date=None, end_date=None):
                         t_obj = dt_ist.time()
 
                         slot = "Other"
-                        if t_obj >= morn_start and t_obj < morn_end:
+                        if t_obj >= morning_start and t_obj < morning_end:
                             slot = "Morning"
                             stats["morning_commits"] += 1
-                        elif t_obj >= aft_start and t_obj <= aft_end:
+                        elif t_obj >= afternoon_start and t_obj < afternoon_end:
                             slot = "Afternoon"
                             stats["afternoon_commits"] += 1
+                        elif t_obj >= evening_start and t_obj < evening_end:
+                            slot = "Evening"
+                            stats["evening_commits"] += 1
+                        elif t_obj >= night_start or t_obj < night_end:
+                            slot = "Night"
+                            stats["night_commits"] += 1
 
                     except Exception:
                         date_str = created_at_str
