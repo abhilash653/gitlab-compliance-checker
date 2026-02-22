@@ -46,10 +46,9 @@ def main():
         "Select Mode",
         [
             "Check Project Compliance",
-            "User Profile Overview",
+            "Contribution Mapping",
             "Batch 2026 ICFAI",
             "Batch 2026 RCTS",
-            "Contribution Mapping",
         ],
     )
 
@@ -78,27 +77,52 @@ def main():
         # We might want to refactor compliance_mode.py later, but for now passing .client works
         render_compliance_mode(client.client)
 
-    elif mode == "User Profile Overview":
-        st.subheader("👤 User Profile Overview")
-        user_input = st.text_input("Enter Username", placeholder="username")
-
-        if user_input:
-            with st.spinner(f"Finding user '{user_input}'..."):
-                user_info = users.get_user_by_username(client, user_input)
-
-            if user_info:
-                render_user_profile(client, user_info)
-            else:
-                st.error(f"User '{user_input}' not found.")
-
-    elif mode == "Batch 2026 ICFAI":
-        render_batch_mode_ui(client, "ICFAI")
-
-    elif mode == "Batch 2026 RCTS":
-        render_batch_mode_ui(client, "RCTS")
-
     elif mode == "Contribution Mapping":
-        render_contribution_mapping_mode(client)
+        # Contribution Mapping mode with nested button flow
+        st.subheader("🗺 Contribution Mapping")
+        
+        # Step 1: Show buttons for User Profile Overview and Team
+        sub_mode_choice = st.radio(
+            "Select Analysis Type",
+            ["User Profile Overview", "Team"],
+            horizontal=True
+        )
+        
+        st.markdown("---")
+        
+        if sub_mode_choice == "User Profile Overview":
+            # Step 2: Show buttons for Contribution and Graphical
+            contribution_type = st.radio(
+                "Select View",
+                ["Contribution", "Graphical"],
+                horizontal=True
+            )
+            
+            st.markdown("---")
+            
+            if contribution_type == "Contribution":
+                # Show the User Profile Overview content
+                st.subheader("👤 User Profile Overview")
+                user_input = st.text_input("Enter Username", placeholder="username")
+                
+                if user_input:
+                    with st.spinner(f"Finding user '{user_input}'..."):
+                        user_info = users.get_user_by_username(client, user_input)
+                    
+                    if user_info:
+                        render_user_profile(client, user_info)
+                    else:
+                        st.error(f"User '{user_input}' not found.")
+            else:
+                # Show single-user Contribution Mapping (Graphical)
+                # Import and call the single user mapping directly
+                from modes.contribution_mapping import render_single_user_mapping
+                render_single_user_mapping(client)
+        
+        elif sub_mode_choice == "Team":
+            # Show Team mapping
+            from modes.contribution_mapping import render_team_mapping
+            render_team_mapping(client)
 
 
 if __name__ == "__main__":
