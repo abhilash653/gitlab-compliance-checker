@@ -387,19 +387,18 @@ def render_team_mapping(client):
     team_names = list(teams.keys())
 
     # Team selection
-    selected_team = st.selectbox("Select Team", team_names)
-    usernames = []
-    if selected_team:
-        usernames = teams.get(selected_team, [])
+    team_name = st.selectbox("Select Team", ["Select a Team"] + team_names, index=0)
 
-        # Display team members
-        st.markdown("#### 👥 Team Members")
-        for username in usernames:
-            st.markdown(f"- {username}")
+    if team_name == "Select a Team":
+        st.info("Please select a team to view members.")
+        st.stop()
 
-    if not usernames:
-        st.info("Please select a team to analyze.")
-        return
+    usernames = teams.get(team_name, [])
+
+    # Display team members
+    st.markdown("#### 👥 Team Members")
+    for username in usernames:
+        st.markdown(f"- {username}")
 
     # Date range
     col1, col2 = st.columns(2)
@@ -566,12 +565,14 @@ def render_contribution_mapping_mode(client):
     st.markdown("🗺 **Contribution Mapping**")
     st.markdown("---")
 
-    # Sub-selection
-    sub_mode = st.radio("Select Analysis Type", ["Single User", "Team"], horizontal=True)
+    analysis_type = st.radio("Select Analysis Type", ["User Profile Overview", "Team"], index=None)
 
-    st.markdown("---")
+    if analysis_type is None:
+        st.info("Please select an analysis type to continue.")
+        st.stop()
 
-    if sub_mode == "Single User":
+    elif analysis_type == "User Profile Overview":
         render_single_user_mapping(client)
-    elif sub_mode == "Team":
+
+    elif analysis_type == "Team":
         render_team_mapping(client)
