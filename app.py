@@ -91,21 +91,24 @@ def main():
         st.markdown("---")
         
         if sub_mode_choice == "User Profile Overview":
-            # Step 2: Show buttons for Contribution and Graphical
-            contribution_type = st.radio(
-                "Select View",
-                ["Contribution", "Graphical"],
-                horizontal=True
-            )
+            # Show User Profile Overview with username input first
+            st.subheader("👤 User Profile Overview")
+            user_input = st.text_input("Enter Username", placeholder="username", key="main_user_input")
             
-            st.markdown("---")
-            
-            if contribution_type == "Contribution":
-                # Show the User Profile Overview content
-                st.subheader("👤 User Profile Overview")
-                user_input = st.text_input("Enter Username", placeholder="username")
+            # Only show Select View after username is entered
+            if user_input:
+                st.markdown("---")
+                contribution_type = st.radio(
+                    "Select View",
+                    ["Contribution", "Graphical"],
+                    horizontal=True,
+                    key="main_view_radio"
+                )
                 
-                if user_input:
+                st.markdown("---")
+                
+                if contribution_type == "Contribution":
+                    # Show the User Profile Overview content (tabular data)
                     with st.spinner(f"Finding user '{user_input}'..."):
                         user_info = users.get_user_by_username(client, user_input)
                     
@@ -113,11 +116,10 @@ def main():
                         render_user_profile(client, user_info)
                     else:
                         st.error(f"User '{user_input}' not found.")
-            else:
-                # Show single-user Contribution Mapping (Graphical)
-                # Import and call the single user mapping directly
-                from modes.contribution_mapping import render_single_user_mapping
-                render_single_user_mapping(client)
+                else:
+                    # Show Graphical view - call render_graphical_view
+                    from modes.contribution_mapping import render_graphical_view
+                    render_graphical_view(client, user_input)
         
         elif sub_mode_choice == "Team":
             # Show Team mapping

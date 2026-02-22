@@ -120,30 +120,50 @@ def classify_activity(total_contributions, active_days, consistency_pct):
         return "⚫ No Activity"
 
     # ============================================================================
-    # 1️⃣ SINGLE USER MAPPING
+    # 1️⃣ USER PROFILE OVERVIEW
     # ============================================================================
 
 
-def render_single_user_mapping(client):
+def render_user_profile_overview(client):
     """
-    Render Single User Mapping interface.
+    Render User Profile Overview interface with conditional view selection.
     """
-    st.markdown("### 📊 Single User Contribution Mapping")
+    # Show user icon and title first
+    st.markdown("### 👤 User Profile Overview")
 
-    # Input fields
-    col1, col2, col3 = st.columns(3)
+    # Username input
+    col1, col2 = st.columns([2, 1])
     with col1:
-        username = st.text_input("Username", placeholder="Enter GitLab username")
-    with col2:
-        today = date.today()
-        default_start = today - timedelta(days=30)
-        start_date = st.date_input("Start Date", value=default_start, max_value=today)
-    with col3:
-        end_date = st.date_input("End Date", value=today, min_value=start_date, max_value=today)
+        username = st.text_input("Enter Username", placeholder="Enter GitLab username", key="user_profile_username")
 
-    if not username:
-        st.info("Please enter a username to analyze contributions.")
-        return
+    # Only show view selection and content after username is entered
+    if username:
+        st.markdown("---")
+        
+        # Select View radio
+        selected_view = st.radio("Select View", ["Contribution", "Graphical"], horizontal=True)
+        
+        st.markdown("---")
+        
+        if selected_view == "Contribution":
+            render_contribution_view(client, username)
+        elif selected_view == "Graphical":
+            render_graphical_view(client, username)
+
+
+def render_contribution_view(client, username):
+    """
+    Render Contribution view - tabular data format with detailed metrics.
+    """
+    # Date range inputs
+    col1, col2 = st.columns(2)
+    today = date.today()
+    default_start = today - timedelta(days=30)
+    
+    with col1:
+        start_date = st.date_input("Start Date", value=default_start, max_value=today, key="contrib_start")
+    with col2:
+        end_date = st.date_input("End Date", value=today, min_value=start_date, max_value=today, key="contrib_end")
 
     if start_date > end_date:
         st.error("❌ Start Date cannot be after End Date.")
@@ -199,11 +219,148 @@ def render_single_user_mapping(client):
     avg_contributions = total_contributions / active_days if active_days > 0 else 0
     longest_streak = calculate_streak(sorted_dates)
 
+    # Count MRs (merged, opened, closed)
+    mr_events = [e for e in processed_events if e.get("target_type") == "MergeRequest"]
+    mr_opened = len([e for e in mr_events if e.get("action_name") in ["opened", "reopened"]])
+    mr_merged = len([e for e in mr_events if e.get("action_name") == "merged"])
+    mr_closed = len([e for e in mr_events if e.get("action_name") == "closed"])
+    total_mrs = len(mr_events)
+
+    # Count Issues (opened, closed)
+    issue_events = [e for e in processed_events if e.get("target_type") == "Issue"]
+    issue_opened = len([e for e in issue_events if e.get("action_name") in ["opened", "reopened"]])
+    issue_closed = len([e for e in issue_events if e.get("action_name") == "closed"])
+    total_issues = len(issue_events)
+
+    # Count Commits (push events)
+    total_commits = len([e for e in processed_events if e.get("action_name") == "pushed"])
+
     # Activity classification
     activity_class = classify_activity(total_contributions, active_days, consistency_pct)
 
     # ==================== SUMMARY CARDS ====================
-    st.markdown("#### 📈 Summary")
+    st.markdown("#### 📊 Contribution Summary")
+    
+    # Main metrics row
+    sc1, sc2, sc3, sc4 = st.columns(4)
+    sc1.metric("Total Commits", total_commits)
+    sc2.metric("Total MRs", total_mrs)
+    sc3.metric("Total Issues", total_issues)
+    sc4.metric("Active Days", active_days)
+
+    # MR breakdown
+    st.markdown("##### 📥 Merge Requests")
+    mr_col1, mr_col2, mr_col3 = st.columns(3)
+    mr_col1.metric("Opened", mr_opened)
+    mr_col2.metric("Merged", mr_merged)
+    mr_col3.metric("Closed", mr_closed)
+
+    # Issue breakdown
+    st.markdown("##### 🐛 Issues")
+    issue_col1, issue_col2 = st.columns(2)
+    issue_col1.metric("Opened", issue_opened)
+    issue_col2.metric("Closed", issue_closed)
+
+    # Activity classification
+    st.markdown(f"**Activity Classification:** {activity_class}")
+
+    if total_contributions == 0:
+        st.info(f"ℹ️ No contributions found between {start_date} and {end_date}.")
+        return
+
+    # ==================== CONTRIBUTION TABLE ====================
+    st.markdown("#### 📋 Contribution Details")
+    
+    if processed_events:
+        df_events = pd.DataFrame(processed_events)
+        # Display the table
+        st.dataframe(df_events, use_container_width=True)
+        
+        # Export option
+        csv = df_events.to_csv(index=False)
+        st.download_button(
+            label="Download Contributions CSV",
+            data=csv,
+            file_name=f"{username}_contributions.csv",
+            mime="text/csv",
+        )
+
+
+def render_graphical_view(client, username):
+    """
+    Render Graphical view - charts and visualizations.
+    """
+    # Date range inputs
+    col1, col2 = st.columns(2)
+    today = date.today()
+    default_start = today - timedelta(days=30)
+    
+    with col1:
+        start_date = st.date_input("Start Date", value=default_start, max_value=today, key="graph_start")
+    with col2:
+        end_date = st.date_input("End Date", value=today, min_value=start_date, max_value=today, key="graph_end")
+
+    if start_date > end_date:
+        st.error("❌ Start Date cannot be after End Date.")
+        return
+
+    # Fetch user
+    with st.spinner(f"Finding user '{username}'..."):
+        user_info = users.get_user_by_username(client, username)
+
+    if not user_info:
+        st.error(f"User '{username}' not found.")
+        return
+
+    user_id = user_info.get("id")
+    user_name = user_info.get("name")
+    avatar_url = user_info.get("avatar_url")
+
+    # Display user info
+    col1, col2 = st.columns([1, 5])
+    with col1:
+        if avatar_url:
+            st.image(avatar_url, width=80)
+    with col2:
+        st.markdown(f"**{user_name}** (@{username})")
+
+    # Fetch events
+    cache_key = f"graph_events_{user_id}_{start_date}_{end_date}"
+
+    with st.spinner(f"Fetching contributions from {start_date} to {end_date}..."):
+        if cache_key not in st.session_state:
+            events = get_user_events(client, user_id, start_date, end_date)
+            st.session_state[cache_key] = events
+        else:
+            events = st.session_state[cache_key]
+
+    processed_events = process_events(events)
+
+    # Calculate metrics
+    total_contributions = len(processed_events)
+
+    # Group by date
+    date_counts = {}
+    for event in processed_events:
+        event_date = event.get("date", "-")
+        if event_date and event_date != "-":
+            date_counts[event_date] = date_counts.get(event_date, 0) + 1
+
+    sorted_dates = sorted(date_counts.keys())
+    active_days = len(sorted_dates)
+
+    total_days = (end_date - start_date).days + 1
+    consistency_pct = (active_days / total_days * 100) if total_days > 0 else 0
+    avg_contributions = total_contributions / active_days if active_days > 0 else 0
+    longest_streak = calculate_streak(sorted_dates)
+
+    # Activity classification
+    activity_class = classify_activity(total_contributions, active_days, consistency_pct)
+
+    # ==================== CONTRIBUTION ANALYTICS (DATE RANGE) ====================
+    st.markdown("#### 📊 Contribution Analytics (Date Range)")
+    
+    # Main metrics row
     sc1, sc2, sc3, sc4 = st.columns(4)
     sc1.metric("Total Contributions", total_contributions)
     sc2.metric("Active Days", active_days)
@@ -215,6 +372,58 @@ def render_single_user_mapping(client):
     if total_contributions == 0:
         st.info(f"ℹ️ No contributions found between {start_date} and {end_date}.")
         return
+
+    # ==================== DAILY CONTRIBUTION ACTIVITY ====================
+    st.markdown("#### 📈 Daily Contribution Activity")
+
+    if sorted_dates:
+        trend_data = [{"date": d, "contributions": date_counts[d]} for d in sorted_dates]
+        df_trend = pd.DataFrame(trend_data)
+        df_trend["date"] = pd.to_datetime(df_trend["date"])
+
+        fig_trend = px.line(
+            df_trend,
+            x="date",
+            y="contributions",
+            title="Daily Contribution Trend",
+            labels={"date": "Date", "contributions": "Contributions"},
+            markers=True,
+        )
+        fig_trend.update_layout(template="plotly_dark")
+        fig_trend.update_traces(line_color="#00CC96", line_width=2)
+        st.plotly_chart(fig_trend, use_container_width=True)
+
+    # ==================== CONSISTENCY INDEX ====================
+    st.markdown("#### 🎯 Consistency Index")
+    
+    # Create consistency visualization
+    consistency_data = []
+    for d, count in date_counts.items():
+        consistency_data.append({"date": d, "contributions": count, "level": "Active"})
+    
+    # Fill in inactive days
+    full_range = pd.date_range(start=start_date, end=end_date)
+    for d in full_range:
+        d_str = d.strftime("%Y-%m-%d")
+        if d_str not in date_counts:
+            consistency_data.append({"date": d_str, "contributions": 0, "level": "Inactive"})
+    
+    if consistency_data:
+        df_consistency = pd.DataFrame(consistency_data)
+        df_consistency["date"] = pd.to_datetime(df_consistency["date"])
+        df_consistency = df_consistency.sort_values("date")
+        
+        fig_consistency = px.bar(
+            df_consistency,
+            x="date",
+            y="contributions",
+            color="level",
+            color_discrete_map={"Active": "#00CC96", "Inactive": "#636EFA"},
+            title="Consistency Index - Active vs Inactive Days",
+            labels={"date": "Date", "contributions": "Contributions", "level": "Status"},
+        )
+        fig_consistency.update_layout(template="plotly_dark")
+        st.plotly_chart(fig_consistency, use_container_width=True)
 
     # ==================== CALENDAR HEATMAP ====================
     st.markdown("#### 📅 Calendar Heatmap")
@@ -250,26 +459,6 @@ def render_single_user_mapping(client):
             xaxis_title="Date", yaxis_title="Contribution Count", template="plotly_dark"
         )
         st.plotly_chart(fig_heatmap, use_container_width=True)
-
-    # ==================== DAILY TREND LINE CHART ====================
-    st.markdown("#### 📉 Daily Trend")
-
-    if sorted_dates:
-        trend_data = [{"date": d, "contributions": date_counts[d]} for d in sorted_dates]
-        df_trend = pd.DataFrame(trend_data)
-        df_trend["date"] = pd.to_datetime(df_trend["date"])
-
-        fig_trend = px.line(
-            df_trend,
-            x="date",
-            y="contributions",
-            title="Daily Contribution Trend",
-            labels={"date": "Date", "contributions": "Contributions"},
-            markers=True,
-        )
-        fig_trend.update_layout(template="plotly_dark")
-        fig_trend.update_traces(line_color="#00CC96", line_width=2)
-        st.plotly_chart(fig_trend, use_container_width=True)
 
     # ==================== CONTRIBUTION TYPE PIE CHART ====================
     st.markdown("#### 🥧 Contribution Types")
@@ -567,11 +756,11 @@ def render_contribution_mapping_mode(client):
     st.markdown("---")
 
     # Sub-selection
-    sub_mode = st.radio("Select Analysis Type", ["Single User", "Team"], horizontal=True)
+    sub_mode = st.radio("Select Analysis Type", ["User Profile Overview", "Team"], horizontal=True)
 
     st.markdown("---")
 
-    if sub_mode == "Single User":
-        render_single_user_mapping(client)
+    if sub_mode == "User Profile Overview":
+        render_user_profile_overview(client)
     elif sub_mode == "Team":
         render_team_mapping(client)
