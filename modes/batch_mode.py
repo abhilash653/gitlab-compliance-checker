@@ -47,14 +47,44 @@ def render_batch_mode_ui(client, report_type):
 
     default_value = DEFAULT_ICFAI_USERS if report_type == "ICFAI" else DEFAULT_RCTS_USERS
 
+    # Date Filter Section
+    st.markdown("### 📅 Date Filter")
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input(
+            "Start Date",
+            value=None,
+            help="Filter contributions from this date onwards",
+            key="batch_start_date"
+        )
+    with col2:
+        end_date = st.date_input(
+            "End Date",
+            value=None,
+            help="Filter contributions up to this date",
+            key="batch_end_date"
+        )
+
+    # Show date range info if dates are selected
+    if start_date and end_date:
+        if start_date > end_date:
+            st.error("⚠️ Start Date must be before End Date")
+            return
+        st.info(f"📊 Showing contributions from **{start_date}** to **{end_date}**")
+    elif start_date:
+        st.info(f"📊 Showing contributions from **{start_date}** onwards")
+    elif end_date:
+        st.info(f"📊 Showing contributions up to **{end_date}**")
+
     user_input = st.text_area(
         "Enter Usernames (one per line)",
-        height=300,
+        height=200,
         value=default_value,
-        placeholder="user1\nuser2\n..."
+        placeholder="user1\nuser2\n...",
+        key="batch_users"
     )
 
-    if st.button("Run Batch Analysis"):
+    if st.button("Run Batch Analysis", key="batch_run"):
         usernames = [line.strip() for line in user_input.splitlines() if line.strip()]
         if not usernames:
             st.warning("Please enter at least one username.")
@@ -63,7 +93,7 @@ def render_batch_mode_ui(client, report_type):
         st.info(f"Processing {len(usernames)} users...")
 
         with st.spinner("Fetching data in parallel..."):
-            results = batch.process_batch_users(client, usernames)
+            results = batch.process_batch_users(client, usernames, start_date=start_date, end_date=end_date)
 
         st.success("Batch processing complete!")
 
@@ -107,7 +137,7 @@ def render_batch_mode_ui(client, report_type):
                     row["MR Open"] = m_stats["opened"]
                     row["MR Closed"] = m_stats["closed"]
                     row["MR Merged"] = m_stats["merged"]
-                    row["Issues Open"] = i_stats["opened"]
+                    row["Issues Opened"] = i_stats["opened"]
                     row["Issues Closed"] = i_stats["closed"]
                     row["Groups Count"] = g_count
 
@@ -119,16 +149,27 @@ def render_batch_mode_ui(client, report_type):
                     row["MR Merged"] = m_stats["merged"]
                     row["MR Pending"] = m_stats["opened"]
                     row["Issues Total"] = i_stats["total"]
+                    row["Issues Opened"] = i_stats["opened"]
+                    row["Issues Closed"] = i_stats["closed"]
                     row["Groups"] = g_count
                     row["Morning Active"] = "Yes" if c_stats["morning_commits"] > 0 else "No"
                     row["Afternoon Active"] = "Yes" if c_stats["afternoon_commits"] > 0 else "No"
             else:
-                 row["Error"] = err
+                row["Error"] = err
 
             report_data.append(row)
 
         # Display Summary
-        st.write(f"### 📊 Batch Summary ({report_type})")
+        date_range_note = ""
+        if start_date or end_date:
+            if start_date and end_date:
+                date_range_note = f" ({start_date} to {end_date})"
+            elif start_date:
+                date_range_note = f" (from {start_date})"
+            elif end_date:
+                date_range_note = f" (up to {end_date})"
+        
+        st.write(f"### 📊 Batch Summary ({report_type}){date_range_note}")
         df_report = pd.DataFrame(report_data)
         st.dataframe(df_report, width="stretch")
 
@@ -152,7 +193,8 @@ def render_batch_mode_ui(client, report_type):
                 label=f"Download {report_type} Report",
                 data=output.getvalue(),
                 file_name=filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="batch_download"
             )
 
         except Exception as e:
