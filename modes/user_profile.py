@@ -283,10 +283,11 @@ def render_user_profile(client, simple_user_info):
     # Commits
     st.markdown("---")
     st.subheader("💻 Commits Analysis (IST)")
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Commits", commit_stats["total"])
-    c2.metric("Morning (9:30-12:30)", commit_stats["morning_commits"])
-    c3.metric("Afternoon (2:00-5:00)", commit_stats["afternoon_commits"])
+    c2.metric("Morning (6AM-12PM)", commit_stats["morning_commits"])
+    c3.metric("Afternoon (12PM-6PM)", commit_stats["afternoon_commits"])
+    c4.metric("Evening (6PM-10PM)", commit_stats["evening_commits"])
 
     if all_commits:
         with st.expander("View Recent Commits"):
@@ -306,26 +307,46 @@ def render_user_profile(client, simple_user_info):
     # Calculate commit distribution by time slot
     morning_count = commit_stats.get("morning_commits", 0)
     afternoon_count = commit_stats.get("afternoon_commits", 0)
-    night_count = commit_stats.get("total", 0) - morning_count - afternoon_count
+    evening_count = commit_stats.get("evening_commits", 0)
+    night_count = commit_stats.get("night_commits", 0)
 
-    # Determine dominant work style
-    if morning_count > afternoon_count and morning_count > night_count:
-        work_style = "☀ Morning Developer"
-    elif afternoon_count > morning_count and afternoon_count > night_count:
-        work_style = "🌤 Afternoon Strategist"
-    elif night_count > morning_count and night_count > afternoon_count:
-        work_style = "🌙 Night Hacker"
+    # Determine dominant work style based on highest count among 4 slots
+    slot_counts = {
+        "Morning": morning_count,
+        "Afternoon": afternoon_count,
+        "Evening": evening_count,
+        "Night": night_count
+    }
+    
+    max_count = max(slot_counts.values())
+    
+    # Get all slots with max count (in case of tie)
+    dominant_slots = [slot for slot, count in slot_counts.items() if count == max_count]
+    
+    if max_count == 0:
+        work_style = "⚖ Balanced Contributor"
+    elif len(dominant_slots) == 1:
+        dominant = dominant_slots[0]
+        if dominant == "Morning":
+            work_style = "☀ Morning Developer"
+        elif dominant == "Afternoon":
+            work_style = "🌤 Afternoon Strategist"
+        elif dominant == "Evening":
+            work_style = "🌆 Evening Contributor"
+        else:
+            work_style = "🌙 Night Hacker"
     else:
         work_style = "⚖ Balanced Contributor"
 
     # Display work style using st.info()
     st.info(f"**Primary Work Style:** {work_style}")
 
-    # Show breakdown
-    ws_col1, ws_col2, ws_col3 = st.columns(3)
-    ws_col1.metric("Morning (9:30-12:30)", morning_count)
-    ws_col2.metric("Afternoon (2:00-5:00)", afternoon_count)
-    ws_col3.metric("Other (Night)", night_count)
+    # Show breakdown for all 4 categories
+    ws_col1, ws_col2, ws_col3, ws_col4 = st.columns(4)
+    ws_col1.metric("Morning (6AM-12PM)", morning_count)
+    ws_col2.metric("Afternoon (12PM-6PM)", afternoon_count)
+    ws_col3.metric("Evening (6PM-10PM)", evening_count)
+    ws_col4.metric("Night (10PM-6AM)", night_count)
 
     # ==============================================
     # ✅ 3️⃣ COLLABORATION INDEX

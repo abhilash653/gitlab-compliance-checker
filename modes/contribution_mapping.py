@@ -6,6 +6,8 @@ This module provides two sub-modes:
 2. Team Mapping - Multi-user contribution analysis
 """
 
+import json
+import os
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -117,10 +119,9 @@ def classify_activity(total_contributions, active_days, consistency_pct):
     else:
         return "⚫ No Activity"
 
-
-# ============================================================================
-# 1️⃣ SINGLE USER MAPPING
-# ============================================================================
+    # ============================================================================
+    # 1️⃣ SINGLE USER MAPPING
+    # ============================================================================
 
 
 def render_single_user_mapping(client):
@@ -343,26 +344,61 @@ def render_single_user_mapping(client):
 # ============================================================================
 
 
+def load_teams():
+    """
+    Load teams from teams.json file.
+    Returns a dictionary of team_name -> list of usernames.
+    """
+    teams_file = "teams.json"
+
+    if not os.path.exists(teams_file):
+        return {}
+
+    try:
+        with open(teams_file, "r") as f:
+            teams_data = json.load(f)
+
+        # Convert list of {username: ...} to simple list of usernames
+        teams = {}
+        for team_name, members in teams_data.items():
+            teams[team_name] = [
+                member.get("username", "") for member in members if member.get("username")
+            ]
+
+        return teams
+    except Exception as e:
+        st.warning(f"Error loading teams.json: {e}")
+        return {}
+
+
 def render_team_mapping(client):
     """
     Render Team Mapping interface.
     """
     st.markdown("### 👥 Team Members Contribution")
 
-    # Manual input only
-    username_input = st.text_area(
-        "Enter Usernames (comma-separated or one per line)",
-        height=150,
-        placeholder="user1, user2, user3",
-    )
+    # Load teams from teams.json
+    teams = load_teams()
 
+    if not teams:
+        st.error("⚠️ No teams found. Please ensure teams.json exists in the project root.")
+        return
+
+    team_names = list(teams.keys())
+
+    # Team selection
+    selected_team = st.selectbox("Select Team", team_names)
     usernames = []
-    if username_input:
-        # Split by comma or newline
-        usernames = [u.strip() for u in username_input.replace("\n", ",").split(",") if u.strip()]
+    if selected_team:
+        usernames = teams.get(selected_team, [])
+
+        # Display team members
+        st.markdown("#### 👥 Team Members")
+        for username in usernames:
+            st.markdown(f"- {username}")
 
     if not usernames:
-        st.info("Please provide usernames to analyze.")
+        st.info("Please select a team to analyze.")
         return
 
     # Date range
