@@ -1,9 +1,15 @@
 from gitlab_utils import users, projects, commits, groups, merge_requests, issues
 import concurrent.futures
 
-def process_single_user(client, username):
+def process_single_user(client, username, start_date=None, end_date=None):
     """
     Worker function to process a single user.
+    
+    Args:
+        client: GitLab client instance
+        username: Username to process
+        start_date: Optional date filter (date object or string)
+        end_date: Optional date filter (date object or string)
     """
     username = username.strip()
     result = {
@@ -31,9 +37,9 @@ def process_single_user(client, username):
         projs = projects.get_user_projects(client, user_id, username)
         result["data"]["projects"] = projs
 
-        # 3. Commits - Now passing user_obj instead of user_id
+        # 3. Commits - Now passing user_obj instead of user_id, with date filters
         all_projs_list = projs["all"]
-        all_commits, commit_counts, commit_stats = commits.get_user_commits(client, user_obj, all_projs_list)
+        all_commits, commit_counts, commit_stats = commits.get_user_commits(client, user_obj, all_projs_list, start_date=start_date, end_date=end_date)
         result["data"]["commits"] = all_commits
         result["data"]["commit_stats"] = commit_stats
 
@@ -49,13 +55,13 @@ def process_single_user(client, username):
         user_groups = groups.get_user_groups(client, user_id)
         result["data"]["groups"] = user_groups
 
-        # 5. MRs
-        user_mrs, mr_stats = merge_requests.get_user_mrs(client, user_id)
+        # 5. MRs - with date filters
+        user_mrs, mr_stats = merge_requests.get_user_mrs(client, user_id, start_date=start_date, end_date=end_date)
         result["data"]["mrs"] = user_mrs
         result["data"]["mr_stats"] = mr_stats
 
-        # 6. Issues
-        user_issues, issue_stats = issues.get_user_issues(client, user_id)
+        # 6. Issues - with date filters
+        user_issues, issue_stats = issues.get_user_issues(client, user_id, start_date=start_date, end_date=end_date)
         result["data"]["issues"] = user_issues
         result["data"]["issue_stats"] = issue_stats
 
@@ -65,16 +71,22 @@ def process_single_user(client, username):
 
     return result
 
-def process_batch_users(client, usernames):
+def process_batch_users(client, usernames, start_date=None, end_date=None):
     """
     Parallel processing of users.
     Returns list of results.
+    
+    Args:
+        client: GitLab client instance
+        usernames: List of usernames to process
+        start_date: Optional date filter (date object or string)
+        end_date: Optional date filter (date object or string)
     """
     results = []
     clean_usernames = [u.strip() for u in usernames if u.strip()]
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_user = {executor.submit(process_single_user, client, u): u for u in clean_usernames}
+        future_to_user = {executor.submit(process_single_user, client, u, start_date, end_date): u for u in clean_usernames}
 
         for future in concurrent.futures.as_completed(future_to_user):
             try:
