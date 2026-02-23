@@ -24,15 +24,28 @@ from gitlab_utils import users
 def get_user_events(client, user_id, start_date, end_date):
     """
     Fetch user events from GitLab API with date filtering.
+    
+    Note: GitLab's 'before' parameter is exclusive, so we add 1 day to make
+    the end date inclusive. This ensures events on the selected end date are included.
     """
+    # Make end_date inclusive by adding 1 day
+    # This fixes the issue where selecting 2026/02/21 → 2026/02/22 would
+    # exclude all events on February 22nd
+    inclusive_end_date = end_date + timedelta(days=1)
+    
     after_date = start_date.isoformat()
-    before_date = end_date.isoformat()
+    before_date = inclusive_end_date.isoformat()
+    
+    # Debug logging
+    st.write(f"📅 Date Filter: {start_date} → {end_date} (inclusive)")
+    st.write(f"   GitLab API: after={after_date}, before={before_date}")
 
     endpoint = f"/users/{user_id}/events"
     params = {"after": after_date, "before": before_date, "per_page": 100}
 
     try:
         events = client._get_paginated(endpoint, params=params, per_page=100, max_pages=10)
+        st.write(f"   Raw events fetched: {len(events) if events else 0}")
         return events if events else []
     except Exception as e:
         st.warning(f"Could not fetch events: {e}")
@@ -637,6 +650,20 @@ def render_team_mapping(client):
                 # Fetch events
                 events = get_user_events(client, user_id, start_date, end_date)
                 processed = process_events(events)
+
+                # Debug: Count different event types
+                commits = [e for e in processed if e.get("action_name") == "pushed"]
+                mrs = [e for e in processed if e.get("target_type") == "MergeRequest"]
+                issues = [e for e in processed if e.get("target_type") == "Issue"]
+                
+                # Debug logging for each user
+                with st.expander(f"Debug: {username}"):
+                    st.write(f"Start Date: {start_date}")
+                    st.write(f"End Date: {end_date}")
+                    st.write(f"Filtered Commits: {len(commits)}")
+                    st.write(f"Filtered MRs: {len(mrs)}")
+                    st.write(f"Filtered Issues: {len(issues)}")
+                    st.write(f"Total Events: {len(processed)}")
 
                 # Calculate metrics
                 total_contributions = len(processed)
