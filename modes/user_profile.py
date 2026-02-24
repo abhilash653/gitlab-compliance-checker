@@ -1,9 +1,110 @@
 from datetime import date, datetime, timedelta
 
 import pandas as pd
+import requests
 import streamlit as st
 
 from gitlab_utils import commits, groups, issues, merge_requests, projects
+
+# ============================================================================
+# HELPER FUNCTIONS - CACHED PROJECT LOOKUP
+# ============================================================================
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_project_details(base_url, private_token, project_id):
+    """
+    Fetch project details from GitLab API with caching.
+
+    Uses @st.cache_data to avoid repeated API calls for the same project.
+    Cached for 1 hour (3600 seconds) to improve performance.
+
+    Args:
+        base_url: GitLab instance URL
+        private_token: GitLab API token
+        project_id: The project ID to fetch
+
+    Returns:
+        Dictionary with project details including path_with_namespace and web_url, or None on error
+    """
+    if not project_id:
+        return None
+
+    try:
+        url = f"{base_url}/api/v4/projects/{project_id}"
+        headers = {"PRIVATE-TOKEN": private_token}
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print(f"Error fetching project {project_id}: {e}")
+        return None
+
+
+def get_project_name(client, project_id, project_cache):
+    """
+    Fetch project name from GitLab API using project_id with caching.
+
+    Args:
+        client: GitLab client instance
+        project_id: The project ID from the event
+        project_cache: Dictionary to cache fetched project names
+
+    Returns:
+        Tuple of (project_name, web_url) or ("-", None) if not found
+    """
+    if not project_id:
+        return "-", None
+
+    # Check in-memory cache first (for current request)
+    # Cache stores tuple: (project_name, web_url)
+    if project_cache and project_id in project_cache:
+        cached = project_cache[project_id]
+        if isinstance(cached, tuple):
+            return cached
+        return cached, None
+
+    try:
+        # Use cached API call via st.cache_data
+        # Extract base_url and token from client
+        base_url = client.base_url
+        private_token = client.headers.get("PRIVATE-TOKEN", "")
+
+        # Call cached function
+        project = fetch_project_details(base_url, private_token, project_id)
+
+        if project and isinstance(project, dict):
+            # Prefer path_with_namespace (more descriptive), fall back to name
+            project_name = project.get("path_with_namespace") or project.get("name", "-")
+            web_url = project.get("web_url")
+            if project_cache is not None:
+                project_cache[project_id] = (project_name, web_url)
+            return project_name, web_url
+        else:
+            if project_cache is not None:
+                project_cache[project_id] = ("-", None)
+            return "-", None
+    except Exception as e:
+        print(f"Error fetching project {project_id}: {e}")
+        if project_cache is not None:
+            project_cache[project_id] = ("-", None)
+        return "-", None
+
+
+def make_project_clickable(project_name, web_url):
+    """
+    Create a clickable markdown link for the project name.
+
+    Args:
+        project_name: The display name for the project
+        web_url: The web URL to link to
+
+    Returns:
+        Markdown string with clickable link
+    """
+    if web_url and project_name and project_name != "-":
+        return f"[{project_name}]({web_url})"
+    return project_name
 
 
 def get_user_events(client, user_id, start_date, end_date):
@@ -36,16 +137,22 @@ def get_user_events(client, user_id, start_date, end_date):
         return []
 
 
-def process_events(events):
+def process_events(events, client=None, project_cache=None):
     """
     Process GitLab events to extract relevant fields.
 
     Args:
         events: List of event dictionaries from GitLab API
+        client: GitLab client instance (optional, for fetching project names)
+        project_cache: Dictionary to cache project names by project_id
 
     Returns:
         List of processed event dictionaries
     """
+    # Initialize cache if not provided
+    if project_cache is None:
+        project_cache = {}
+
     processed = []
     for event in events or []:
         created_at = event.get("created_at")
@@ -59,15 +166,31 @@ def process_events(events):
             except Exception:
                 event_date = "-"
 
+        # Try to get project name - prioritize project_id since GitLab Events API
+        # typically returns project_id directly, not nested project objects
+        # Use cached API call to get project name via project_id
+        project_name = "-"
+        web_url = None
+        if client and event.get("project_id"):
+            # Use cached API call to get project name and web_url
+            project_name, web_url = get_project_name(client, event.get("project_id"), project_cache)
+        elif event.get("project"):
+            # Fallback: check for nested project object (rare in Events API)
+            project = event.get("project", {})
+            project_name = project.get("name", "-")
+            web_url = project.get("web_url")
+
+        # Create clickable project name
+        project_name_display = make_project_clickable(project_name, web_url)
+
         processed.append(
             {
                 "created_at": created_at or "-",
                 "date": event_date,
                 "action_name": event.get("action_name", "-"),
                 "target_type": event.get("target_type", "-"),
-                "project_name": event.get("project", {}).get("name", "-")
-                if event.get("project")
-                else "-",
+                "project_name": project_name_display,
+                "project_web_url": web_url,
                 "target_title": event.get("target_title", "-") or "-",
             }
         )
@@ -140,8 +263,14 @@ def render_user_profile(client, simple_user_info):
         else:
             events = st.session_state[events_cache_key]
 
-    # Process events
-    processed_events = process_events(events)
+    # Initialize project cache for this user/date range
+    project_cache_key = f"events_project_cache_{user_id}_{start_date}_{end_date}"
+    if project_cache_key not in st.session_state:
+        st.session_state[project_cache_key] = {}
+    project_cache = st.session_state[project_cache_key]
+
+    # Process events with project name resolution (using caching)
+    processed_events = process_events(events, client=client, project_cache=project_cache)
 
     # Display events count and info
     st.markdown(f"**Contributions found:** {len(processed_events)} events")
@@ -315,14 +444,14 @@ def render_user_profile(client, simple_user_info):
         "Morning": morning_count,
         "Afternoon": afternoon_count,
         "Evening": evening_count,
-        "Night": night_count
+        "Night": night_count,
     }
-    
+
     max_count = max(slot_counts.values())
-    
+
     # Get all slots with max count (in case of tie)
     dominant_slots = [slot for slot, count in slot_counts.items() if count == max_count]
-    
+
     if max_count == 0:
         work_style = "⚖ Balanced Contributor"
     elif len(dominant_slots) == 1:

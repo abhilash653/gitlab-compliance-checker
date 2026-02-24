@@ -17,45 +17,164 @@ import streamlit as st
 from gitlab_utils import users
 
 # ============================================================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS - CACHED PROJECT LOOKUP
 # ============================================================================
 
 
-def get_user_events(client, user_id, start_date, end_date):
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_project_details(base_url, private_token, project_id):
+    """
+    Fetch project details from GitLab API with caching.
+
+    Uses @st.cache_data to avoid repeated API calls for the same project.
+    Cached for 1 hour (3600 seconds) to improve performance.
+
+    Args:
+        base_url: GitLab instance URL
+        private_token: GitLab API token
+        project_id: The project ID to fetch
+
+    Returns:
+        Dictionary with project details including path_with_namespace and web_url, or None on error
+    """
+    import requests
+
+    if not project_id:
+        return None
+
+    try:
+        url = f"{base_url}/api/v4/projects/{project_id}"
+        headers = {"PRIVATE-TOKEN": private_token}
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print(f"Error fetching project {project_id}: {e}")
+        return None
+
+
+def make_project_clickable(project_name, web_url):
+    """
+    Create a clickable markdown link for the project name.
+
+    Args:
+        project_name: The display name for the project
+        web_url: The web URL to link to
+
+    Returns:
+        Markdown string with clickable link
+    """
+    if web_url and project_name and project_name != "-":
+        return f"[{project_name}]({web_url})"
+    return project_name
+
+
+def get_project_name(client, project_id, project_cache):
+    """
+    Fetch project name from GitLab API using project_id with caching.
+
+    Args:
+        client: GitLab client instance
+        project_id: The project ID from the event
+        project_cache: Dictionary to cache fetched project names
+
+    Returns:
+        Tuple of (project_name, web_url) or ("-", None) if not found
+    """
+    if not project_id:
+        return "-", None
+
+    # Check in-memory cache first (for current request)
+    # Cache stores tuple: (project_name, web_url)
+    if project_cache and project_id in project_cache:
+        cached = project_cache[project_id]
+        if isinstance(cached, tuple):
+            return cached
+        return cached, None
+
+    try:
+        # Use cached API call via st.cache_data
+        # Extract base_url and token from client
+        base_url = client.base_url
+        private_token = client.headers.get("PRIVATE-TOKEN", "")
+
+        # Call cached function
+        project = fetch_project_details(base_url, private_token, project_id)
+
+        if project and isinstance(project, dict):
+            # Prefer path_with_namespace (more descriptive), fall back to name
+            project_name = project.get("path_with_namespace") or project.get("name", "-")
+            web_url = project.get("web_url")
+            if project_cache is not None:
+                project_cache[project_id] = (project_name, web_url)
+            return project_name, web_url
+        else:
+            if project_cache is not None:
+                project_cache[project_id] = ("-", None)
+            return "-", None
+    except Exception as e:
+        print(f"Error fetching project {project_id}: {e}")
+        if project_cache is not None:
+            project_cache[project_id] = ("-", None)
+        return "-", None
+
+
+def get_user_events(client, user_id, start_date, end_date, show_debug=False):
     """
     Fetch user events from GitLab API with date filtering.
-    
+
     Note: GitLab's 'before' parameter is exclusive, so we add 1 day to make
     the end date inclusive. This ensures events on the selected end date are included.
+
+    Args:
+        client: GitLab client instance
+        user_id: GitLab user ID
+        start_date: Start date for filtering
+        end_date: End date for filtering
+        show_debug: Whether to show debug logs (default: False)
     """
     # Make end_date inclusive by adding 1 day
     # This fixes the issue where selecting 2026/02/21 → 2026/02/22 would
     # exclude all events on February 22nd
     inclusive_end_date = end_date + timedelta(days=1)
-    
+
     after_date = start_date.isoformat()
     before_date = inclusive_end_date.isoformat()
-    
-    # Debug logging
-    st.write(f"📅 Date Filter: {start_date} → {end_date} (inclusive)")
-    st.write(f"   GitLab API: after={after_date}, before={before_date}")
+
+    # Debug logging (only if enabled)
+    if show_debug:
+        st.write(f"📅 Date Filter: {start_date} → {end_date} (inclusive)")
+        st.write(f"   GitLab API: after={after_date}, before={before_date}")
 
     endpoint = f"/users/{user_id}/events"
     params = {"after": after_date, "before": before_date, "per_page": 100}
 
     try:
         events = client._get_paginated(endpoint, params=params, per_page=100, max_pages=10)
-        st.write(f"   Raw events fetched: {len(events) if events else 0}")
+        if show_debug:
+            st.write(f"   Raw events fetched: {len(events) if events else 0}")
         return events if events else []
     except Exception as e:
         st.warning(f"Could not fetch events: {e}")
         return []
 
 
-def process_events(events):
+def process_events(events, client=None, project_cache=None):
     """
     Process GitLab events to extract relevant fields.
+
+    Args:
+        events: List of GitLab events
+        client: GitLab client instance (optional, for fetching project names)
+        project_cache: Dictionary to cache project names by project_id
+
+    Returns:
+        List of processed event dictionaries with project_name (clickable) and web_url
     """
+    # Initialize cache if not provided
+    if project_cache is None:
+        project_cache = {}
+
     processed = []
     for event in events or []:
         created_at = event.get("created_at")
@@ -70,6 +189,23 @@ def process_events(events):
             except Exception:
                 pass
 
+        # Try to get project name - prioritize project_id since GitLab Events API
+        # typically returns project_id directly, not nested project objects
+        # Use cached API call to get project name via project_id
+        project_name = "-"
+        web_url = None
+        if client and event.get("project_id"):
+            # Use cached API call to get project name and web_url
+            project_name, web_url = get_project_name(client, event.get("project_id"), project_cache)
+        elif event.get("project"):
+            # Fallback: check for nested project object (rare in Events API)
+            project = event.get("project", {})
+            project_name = project.get("name", "-")
+            web_url = project.get("web_url")
+
+        # Create clickable project name
+        project_name_display = make_project_clickable(project_name, web_url)
+
         processed.append(
             {
                 "created_at": created_at or "-",
@@ -77,9 +213,8 @@ def process_events(events):
                 "time": event_time,
                 "action_name": event.get("action_name", "-"),
                 "target_type": event.get("target_type", "-"),
-                "project_name": event.get("project", {}).get("name", "-")
-                if event.get("project")
-                else "-",
+                "project_name": project_name_display,
+                "project_web_url": web_url,
                 "target_title": event.get("target_title", "-") or "-",
             }
         )
@@ -230,7 +365,14 @@ def render_contribution_view(client, username):
         else:
             events = st.session_state[cache_key]
 
-    processed_events = process_events(events)
+    # Initialize project cache for this user/date range
+    project_cache_key = f"contrib_project_cache_{user_id}_{start_date}_{end_date}"
+    if project_cache_key not in st.session_state:
+        st.session_state[project_cache_key] = {}
+    project_cache = st.session_state[project_cache_key]
+
+    # Process events with project name resolution (using caching)
+    processed_events = process_events(events, client=client, project_cache=project_cache)
 
     # Calculate metrics
     total_contributions = len(processed_events)
@@ -368,7 +510,14 @@ def render_graphical_view(client, username):
         else:
             events = st.session_state[cache_key]
 
-    processed_events = process_events(events)
+    # Initialize project cache for this user/date range
+    project_cache_key = f"graph_project_cache_{user_id}_{start_date}_{end_date}"
+    if project_cache_key not in st.session_state:
+        st.session_state[project_cache_key] = {}
+    project_cache = st.session_state[project_cache_key]
+
+    # Process events with project name resolution (using caching)
+    processed_events = process_events(events, client=client, project_cache=project_cache)
 
     # Calculate metrics
     total_contributions = len(processed_events)
@@ -573,9 +722,9 @@ def load_teams():
 
 def render_team_mapping(client):
     """
-    Render Team Mapping interface.
+    Render Team Mapping interface with professional dashboard layout.
     """
-    st.markdown("### 👥 Team Members Contribution")
+    st.markdown("### 👥 Team Contribution Dashboard")
 
     # Load teams from teams.json
     teams = load_teams()
@@ -587,7 +736,9 @@ def render_team_mapping(client):
     team_names = list(teams.keys())
 
     # Team selection
-    team_name = st.selectbox("Select Team", ["Select a Team"] + team_names, index=0)
+    team_name = st.selectbox(
+        "Select Team", ["Select a Team"] + team_names, index=0, key="team_select"
+    )
 
     if team_name == "Select a Team":
         st.info("Please select a team to view members.")
@@ -595,13 +746,25 @@ def render_team_mapping(client):
 
     usernames = teams.get(team_name, [])
 
-    # Display team members
-    st.markdown("#### 👥 Team Members")
-    for username in usernames:
-        st.markdown(f"- {username}")
+    st.divider()
 
-    # Date range
-    col1, col2 = st.columns(2)
+    # ==================== TEAM MEMBERS DASHBOARD ====================
+    st.markdown("#### 👥 Team Members")
+
+    # Create professional member cards layout
+    if usernames:
+        # Display members in columns (max 4 per row)
+        cols_per_row = 4
+        for i in range(0, len(usernames), cols_per_row):
+            row_cols = st.columns(cols_per_row)
+            for j, username in enumerate(usernames[i : i + cols_per_row]):
+                with row_cols[j]:
+                    st.info(f"👤 {username}")
+
+    st.divider()
+
+    # ==================== DATE RANGE SELECTION ====================
+    col1, col2, col3 = st.columns([1, 1, 1])
     today = date.today()
     default_start = today - timedelta(days=30)
 
@@ -613,6 +776,16 @@ def render_team_mapping(client):
         end_date = st.date_input(
             "End Date", value=today, min_value=start_date, max_value=today, key="batch_end"
         )
+    with col3:
+        # Show date range summary
+        date_range_days = (end_date - start_date).days + 1
+        st.markdown("##### 📅 Date Range")
+        st.markdown(f"**{date_range_days} days**")
+
+    # Debug logs checkbox
+    show_debug = st.checkbox("Show Debug Logs", value=False, key="show_debug")
+
+    st.divider()
 
     if start_date > end_date:
         st.error("❌ Start Date cannot be after End Date.")
@@ -621,7 +794,11 @@ def render_team_mapping(client):
     if st.button("Run Team Analysis", type="primary"):
         st.info(f"Processing {len(usernames)} users...")
 
+        # Initialize project cache for this analysis
+        project_cache = {}
+
         results = []
+        total_contributions_all = 0
         progress_bar = st.progress(0)
 
         for i, username in enumerate(usernames):
@@ -646,27 +823,43 @@ def render_team_mapping(client):
                     continue
 
                 user_id = user_info.get("id")
+                user_name = user_info.get("name", "")
 
-                # Fetch events
-                events = get_user_events(client, user_id, start_date, end_date)
-                processed = process_events(events)
+                # Fetch events (pass show_debug to control debug output)
+                events = get_user_events(
+                    client, user_id, start_date, end_date, show_debug=show_debug
+                )
+                # Pass client and project_cache for proper project name resolution
+                processed = process_events(events, client=client, project_cache=project_cache)
 
-                # Debug: Count different event types
+                # Debug: Count different event types (only if debug is enabled)
                 commits = [e for e in processed if e.get("action_name") == "pushed"]
                 mrs = [e for e in processed if e.get("target_type") == "MergeRequest"]
                 issues = [e for e in processed if e.get("target_type") == "Issue"]
-                
-                # Debug logging for each user
-                with st.expander(f"Debug: {username}"):
-                    st.write(f"Start Date: {start_date}")
-                    st.write(f"End Date: {end_date}")
-                    st.write(f"Filtered Commits: {len(commits)}")
-                    st.write(f"Filtered MRs: {len(mrs)}")
-                    st.write(f"Filtered Issues: {len(issues)}")
-                    st.write(f"Total Events: {len(processed)}")
+
+                # Debug logging for each user (hidden behind checkbox)
+                if show_debug:
+                    with st.expander(f"Debug: {username}", expanded=False):
+                        st.write(f"**User:** {user_name} (@{username})")
+                        st.write(f"**Start Date:** {start_date}")
+                        st.write(f"**End Date:** {end_date}")
+                        st.write(f"**Filtered Commits:** {len(commits)}")
+                        st.write(f"**Filtered MRs:** {len(mrs)}")
+                        st.write(f"**Filtered Issues:** {len(issues)}")
+                        st.write(f"**Total Events:** {len(processed)}")
+
+                        # Show project names if available
+                        project_names = set(
+                            e.get("project_name", "-")
+                            for e in processed
+                            if e.get("project_name") != "-"
+                        )
+                        if project_names:
+                            st.write(f"**Projects:** {', '.join(project_names)}")
 
                 # Calculate metrics
                 total_contributions = len(processed)
+                total_contributions_all += total_contributions
 
                 date_counts = {}
                 for event in processed:
@@ -693,6 +886,7 @@ def render_team_mapping(client):
                 results.append(
                     {
                         "username": username,
+                        "user_name": user_name,
                         "status": "Success",
                         "total_contributions": total_contributions,
                         "active_days": active_days,
@@ -704,10 +898,34 @@ def render_team_mapping(client):
         progress_bar.empty()
 
         # Display results
-        st.success("Batch processing complete!")
+        st.success("✅ Team analysis complete!")
 
-        # Summary table
-        st.markdown("#### 📋 Summary Table")
+        st.divider()
+
+        # ==================== METRIC CARDS ====================
+        st.markdown("#### 📊 Team Overview")
+
+        # Calculate aggregate metrics
+        successful_results = [r for r in results if r.get("status") == "Success"]
+        total_members = len(usernames)
+        successful_members = len(successful_results)
+
+        # Create metric cards
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            st.metric(
+                label="Total Members", value=total_members, delta=f"{successful_members} successful"
+            )
+        with m2:
+            st.metric(label="Total Contributions", value=total_contributions_all)
+        with m3:
+            date_range_str = f"{start_date} → {end_date}"
+            st.metric(label="Date Range", value=date_range_str)
+
+        st.divider()
+
+        # ==================== SUMMARY TABLE ====================
+        st.markdown("#### 📋 Team Summary")
 
         if results:
             df_results = pd.DataFrame(results)
@@ -716,14 +934,14 @@ def render_team_mapping(client):
             df_results["consistency_pct"] = df_results["consistency_pct"].round(1)
             df_results["collaboration_pct"] = df_results["collaboration_pct"].round(1)
 
-            st.dataframe(df_results, use_container_width=True)
+            # Display clean dataframe
+            st.dataframe(df_results, use_container_width=True, hide_index=True)
 
             # ==================== BAR CHART ====================
             st.markdown("#### 📊 Contributions per User")
 
-            success_results = [r for r in results if r.get("status") == "Success"]
-            if success_results:
-                df_chart = pd.DataFrame(success_results)
+            if successful_results:
+                df_chart = pd.DataFrame(successful_results)
                 df_chart = df_chart.sort_values("total_contributions", ascending=True)
 
                 # Highlight top 3
@@ -744,7 +962,9 @@ def render_team_mapping(client):
                 fig_bar.update_layout(template="plotly_dark", showlegend=False, xaxis_tickangle=-45)
                 st.plotly_chart(fig_bar, use_container_width=True)
 
-                # Highlight top 3 users
+                st.divider()
+
+                # ==================== TOP 3 CONTRIBUTORS ====================
                 st.markdown("#### 🏆 Top 3 Contributors")
                 top_3 = df_results.nlargest(3, "total_contributions")
 
@@ -752,17 +972,21 @@ def render_team_mapping(client):
                 for idx, (_, row) in enumerate(top_3.iterrows()):
                     with top_cols[idx]:
                         st.metric(
-                            f"#{idx + 1} {row['username']}",
-                            f"{row['total_contributions']} contributions",
-                            f"{row['active_days']} active days",
+                            label=f"#{idx + 1} {row['username']}",
+                            value=f"{row['total_contributions']} contributions",
+                            delta=f"{row['active_days']} active days"
+                            if row["active_days"]
+                            else None,
                         )
+
+            st.divider()
 
             # Export option
             csv = df_results.to_csv(index=False)
             st.download_button(
-                label="Download Results CSV",
+                label="📥 Download Results CSV",
                 data=csv,
-                file_name="batch_contributions.csv",
+                file_name="team_contributions.csv",
                 mime="text/csv",
             )
 
