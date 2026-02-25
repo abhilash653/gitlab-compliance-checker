@@ -1013,17 +1013,29 @@ def render_team_mapping(client):
 
                 # ==================== TOP 3 CONTRIBUTORS ====================
                 st.markdown("#### 🏆 Top 3 Contributors")
-                top_3 = df_results.nlargest(3, "total_contributions")
+
+                # Use the renamed column 'Contributions' with a safeguard
+                contrib_col = (
+                    "Contributions"
+                    if "Contributions" in df_results.columns
+                    else "total_contributions"
+                )
+                top_3 = (
+                    df_results.nlargest(3, contrib_col)
+                    if contrib_col in df_results.columns
+                    else pd.DataFrame()
+                )
 
                 top_cols = st.columns(3)
                 for idx, (_, row) in enumerate(top_3.iterrows()):
                     with top_cols[idx]:
+                        # Use renamed column with fallback
+                        contrib_val = row.get("Contributions", row.get("total_contributions", 0))
+                        active_val = row.get("Active Days", row.get("active_days", 0))
                         st.metric(
                             label=f"#{idx + 1} {row['username']}",
-                            value=f"{row['total_contributions']} contributions",
-                            delta=f"{row['active_days']} active days"
-                            if row["active_days"]
-                            else None,
+                            value=f"{contrib_val} contributions",
+                            delta=f"{active_val} active days" if active_val else None,
                         )
 
             st.divider()
