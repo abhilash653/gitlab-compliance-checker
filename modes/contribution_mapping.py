@@ -14,6 +14,8 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+import gitlab_utils.issues as issue_utils
+import gitlab_utils.merge_requests as mr_utils
 from gitlab_utils import users
 
 # ============================================================================
@@ -818,6 +820,8 @@ def render_team_mapping(client):
                             "active_days": 0,
                             "consistency_pct": 0,
                             "collaboration_pct": 0,
+                            "merge_requests_count": 0,
+                            "issues_count": 0,
                         }
                     )
                     continue
@@ -883,6 +887,26 @@ def render_team_mapping(client):
                     else 0
                 )
 
+                # Fetch Merge Requests count for this user
+                mr_count = 0
+                try:
+                    _, mr_stats = mr_utils.get_user_mrs(client, user_id, start_date, end_date)
+                    mr_count = mr_stats.get("total", 0) if mr_stats else 0
+                except Exception as e:
+                    if show_debug:
+                        st.warning(f"Error fetching MRs for {username}: {e}")
+
+                # Fetch Issues count for this user
+                issue_count = 0
+                try:
+                    _, issue_stats = issue_utils.get_user_issues(
+                        client, user_id, start_date, end_date
+                    )
+                    issue_count = issue_stats.get("total", 0) if issue_stats else 0
+                except Exception as e:
+                    if show_debug:
+                        st.warning(f"Error fetching Issues for {username}: {e}")
+
                 results.append(
                     {
                         "username": username,
@@ -892,6 +916,8 @@ def render_team_mapping(client):
                         "active_days": active_days,
                         "consistency_pct": consistency_pct,
                         "collaboration_pct": collaboration_pct,
+                        "merge_requests_count": mr_count,
+                        "issues_count": issue_count,
                     }
                 )
 
@@ -910,8 +936,12 @@ def render_team_mapping(client):
         total_members = len(usernames)
         successful_members = len(successful_results)
 
+        # Calculate total MRs and Issues
+        total_mrs = sum(r.get("merge_requests_count", 0) for r in successful_results)
+        total_issues = sum(r.get("issues_count", 0) for r in successful_results)
+
         # Create metric cards
-        m1, m2, m3 = st.columns(3)
+        m1, m2, m3, m4 = st.columns(4)
         with m1:
             st.metric(
                 label="Total Members", value=total_members, delta=f"{successful_members} successful"
@@ -919,8 +949,13 @@ def render_team_mapping(client):
         with m2:
             st.metric(label="Total Contributions", value=total_contributions_all)
         with m3:
-            date_range_str = f"{start_date} → {end_date}"
-            st.metric(label="Date Range", value=date_range_str)
+            st.metric(label="Total Merge Requests", value=total_mrs)
+        with m4:
+            st.metric(label="Total Issues", value=total_issues)
+
+        # Show date range info
+        date_range_str = f"{start_date} → {end_date}"
+        st.info(f"📅 Analysis Period: {date_range_str}")
 
         st.divider()
 
@@ -933,6 +968,18 @@ def render_team_mapping(client):
             # Format columns
             df_results["consistency_pct"] = df_results["consistency_pct"].round(1)
             df_results["collaboration_pct"] = df_results["collaboration_pct"].round(1)
+
+            # Rename columns for better display
+            df_results = df_results.rename(
+                columns={
+                    "merge_requests_count": "MRs",
+                    "issues_count": "Issues",
+                    "total_contributions": "Contributions",
+                    "active_days": "Active Days",
+                    "consistency_pct": "Consistency %",
+                    "collaboration_pct": "Collaboration %",
+                }
+            )
 
             # Display clean dataframe
             st.dataframe(df_results, use_container_width=True, hide_index=True)
