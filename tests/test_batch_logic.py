@@ -1,5 +1,11 @@
 import pytest
+import sys
+import os
 from unittest.mock import MagicMock, patch
+
+# Add parent directory to path to import local modules
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from gitlab_utils import batch, projects
 
 @pytest.fixture
