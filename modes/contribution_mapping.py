@@ -16,6 +16,7 @@ import streamlit as st
 
 import gitlab_utils.issues as issue_utils
 import gitlab_utils.merge_requests as mr_utils
+import gitlab_utils.commits as commit_utils
 from gitlab_utils import users
 
 # ============================================================================
@@ -125,8 +126,9 @@ def get_user_events(client, user_id, start_date, end_date, show_debug=False):
     """
     Fetch user events from GitLab API with date filtering.
 
-    Note: GitLab's 'before' parameter is exclusive, so we add 1 day to make
-    the end date inclusive. This ensures events on the selected end date are included.
+    GitLab's 'before' parameter is exclusive, so we add 1 day to make
+    the end date inclusive. Similarly, we subtract 1 day from start_date
+    to ensure we include events from the start date.
 
     Args:
         client: GitLab client instance
@@ -135,13 +137,14 @@ def get_user_events(client, user_id, start_date, end_date, show_debug=False):
         end_date: End date for filtering
         show_debug: Whether to show debug logs (default: False)
     """
-    # Make end_date inclusive by adding 1 day
-    # This fixes the issue where selecting 2026/02/21 → 2026/02/22 would
-    # exclude all events on February 22nd
-    inclusive_end_date = end_date + timedelta(days=1)
+    # Extend the range by 1 day on each side to ensure we capture all events
+    # GitLab's 'before' is exclusive, so we need end_date + 1 day
+    # GitLab's 'after' is inclusive but we extend by 1 day to be safe
+    extended_start = start_date - timedelta(days=1)
+    extended_end = end_date + timedelta(days=1)
 
-    after_date = start_date.isoformat()
-    before_date = inclusive_end_date.isoformat()
+    after_date = extended_start.isoformat()
+    before_date = extended_end.isoformat()
 
     # Debug logging (only if enabled)
     if show_debug:
@@ -153,9 +156,29 @@ def get_user_events(client, user_id, start_date, end_date, show_debug=False):
 
     try:
         events = client._get_paginated(endpoint, params=params, per_page=100, max_pages=10)
+        
+        # Filter events to only include those within the exact date range
+        # This handles timezone differences and ensures accurate filtering
+        filtered_events = []
+        for event in events or []:
+            created_at = event.get("created_at")
+            if created_at:
+                try:
+                    # Parse the event timestamp
+                    event_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    event_date = event_dt.date()
+                    
+                    # Check if event falls within the requested date range
+                    if start_date <= event_date <= end_date:
+                        filtered_events.append(event)
+                except Exception:
+                    # If we can't parse the date, include the event
+                    filtered_events.append(event)
+        
         if show_debug:
             st.write(f"   Raw events fetched: {len(events) if events else 0}")
-        return events if events else []
+            st.write(f"   Filtered events: {len(filtered_events)}")
+        return filtered_events if filtered_events else []
     except Exception as e:
         st.warning(f"Could not fetch events: {e}")
         return []
@@ -817,6 +840,7 @@ def render_team_mapping(client):
                             "status": "Error",
                             "error": "User not found",
                             "total_contributions": 0,
+                            "commits": 0,
                             "active_days": 0,
                             "consistency_pct": 0,
                             "collaboration_pct": 0,
@@ -837,7 +861,11 @@ def render_team_mapping(client):
                 processed = process_events(events, client=client, project_cache=project_cache)
 
                 # Debug: Count different event types (only if debug is enabled)
-                commits = [e for e in processed if e.get("action_name") == "pushed"]
+                # Check for multiple action_names that indicate push/commits
+                commits_events = [
+                    e for e in processed 
+                    if e.get("action_name") in ["pushed", "push", "accepted", "created"]
+                ]
                 mrs = [e for e in processed if e.get("target_type") == "MergeRequest"]
                 issues = [e for e in processed if e.get("target_type") == "Issue"]
 
@@ -847,10 +875,14 @@ def render_team_mapping(client):
                         st.write(f"**User:** {user_name} (@{username})")
                         st.write(f"**Start Date:** {start_date}")
                         st.write(f"**End Date:** {end_date}")
-                        st.write(f"**Filtered Commits:** {len(commits)}")
-                        st.write(f"**Filtered MRs:** {len(mrs)}")
-                        st.write(f"**Filtered Issues:** {len(issues)}")
+                        st.write(f"**Events - Commits:** {len(commits_events)}")
+                        st.write(f"**Events - MRs:** {len(mrs)}")
+                        st.write(f"**Events - Issues:** {len(issues)}")
                         st.write(f"**Total Events:** {len(processed)}")
+                        
+                        # Show all unique action_names found
+                        action_names = set(e.get("action_name", "-") for e in processed)
+                        st.write(f"**Action Names Found:** {action_names}")
 
                         # Show project names if available
                         project_names = set(
@@ -861,10 +893,46 @@ def render_team_mapping(client):
                         if project_names:
                             st.write(f"**Projects:** {', '.join(project_names)}")
 
-                # Calculate metrics
+                # Calculate metrics - count commits from events as primary source
                 total_contributions = len(processed)
                 total_contributions_all += total_contributions
 
+                # Use commits from events as the main commit count
+                commit_count = len(commits_events)
+                
+                # Also try to get commits via API as supplementary data
+                api_commit_count = 0
+                try:
+                    # Get user's projects first
+                    user_projects = []
+                    try:
+                        # Get projects where user is a member
+                        projects_endpoint = f"/users/{user_id}/projects"
+                        user_projects = client._get_paginated(
+                            projects_endpoint, params={"membership": True, "per_page": 100}, per_page=100, max_pages=5
+                        )
+                    except Exception:
+                        pass
+                    
+                    if user_projects:
+                        # Use the commits API to get commit count
+                        _, _, commit_stats = commit_utils.get_user_commits(
+                            client, user_info, user_projects, start_date, end_date
+                        )
+                        api_commit_count = commit_stats.get("total", 0) if commit_stats else 0
+                    
+                    # Use the higher of the two counts
+                    commit_count = max(commit_count, api_commit_count)
+                    
+                    if show_debug:
+                        st.write(f"**Commits (events):** {len(commits_events)}")
+                        st.write(f"**Commits (via API):** {api_commit_count}")
+                        st.write(f"**Commits (final):** {commit_count}")
+                except Exception as e:
+                    if show_debug:
+                        st.warning(f"Error fetching commits for {username}: {e}")
+
+                # Calculate date counts and other metrics
                 date_counts = {}
                 for event in processed:
                     event_date = event.get("date", "-")
@@ -876,13 +944,13 @@ def render_team_mapping(client):
                 consistency_pct = (active_days / total_days * 100) if total_days > 0 else 0
 
                 # Collaboration % - based on events that involve others
-                collaboration_events = sum(
+                collaboration_events_list = sum(
                     1
                     for e in processed
                     if e.get("action_name") in ["merged", "accepted", "commented", "closed"]
                 )
                 collaboration_pct = (
-                    (collaboration_events / total_contributions * 100)
+                    (collaboration_events_list / total_contributions * 100)
                     if total_contributions > 0
                     else 0
                 )
@@ -913,6 +981,7 @@ def render_team_mapping(client):
                         "user_name": user_name,
                         "status": "Success",
                         "total_contributions": total_contributions,
+                        "commits": commit_count,
                         "active_days": active_days,
                         "consistency_pct": consistency_pct,
                         "collaboration_pct": collaboration_pct,
@@ -936,26 +1005,37 @@ def render_team_mapping(client):
         total_members = len(usernames)
         successful_members = len(successful_results)
 
-        # Calculate total MRs and Issues
+        # Calculate total MRs, Issues and Commits
         total_mrs = sum(r.get("merge_requests_count", 0) for r in successful_results)
         total_issues = sum(r.get("issues_count", 0) for r in successful_results)
+        total_commits = sum(r.get("commits", 0) for r in successful_results)
 
         # Create metric cards
-        m1, m2, m3, m4 = st.columns(4)
+        m1, m2, m3, m4, m5 = st.columns(5)
         with m1:
             st.metric(
                 label="Total Members", value=total_members, delta=f"{successful_members} successful"
             )
         with m2:
-            st.metric(label="Total Contributions", value=total_contributions_all)
+            st.metric(label="Total Commits", value=total_commits)
         with m3:
-            st.metric(label="Total Merge Requests", value=total_mrs)
+            st.metric(label="Total MRs", value=total_mrs)
         with m4:
             st.metric(label="Total Issues", value=total_issues)
+        with m5:
+            st.metric(label="Total Contributions", value=total_contributions_all)
 
-        # Show date range info
-        date_range_str = f"{start_date} → {end_date}"
+        # Show date range info in YYYY-MM-DD format
+        start_date_str = start_date.strftime("%Y-%m-%d")
+        end_date_str = end_date.strftime("%Y-%m-%d")
+        date_range_str = f"{start_date_str} → {end_date_str}"
         st.info(f"📅 Analysis Period: {date_range_str}")
+
+        # Show appropriate message based on results
+        if total_contributions_all == 0:
+            st.warning(f"⚠️ No contributions found for the selected period: {date_range_str}")
+        else:
+            st.success(f"✅ Analysis complete! Found {total_contributions_all} contributions for {date_range_str}")
 
         st.divider()
 
@@ -974,6 +1054,7 @@ def render_team_mapping(client):
                 columns={
                     "merge_requests_count": "MRs",
                     "issues_count": "Issues",
+                    "commits": "Commits",
                     "total_contributions": "Contributions",
                     "active_days": "Active Days",
                     "consistency_pct": "Consistency %",
