@@ -1,5 +1,6 @@
 streamlit
-python-gitlab
 python-dotenv
 requests
+pandas
+python-gitlab
 gitlab-utils

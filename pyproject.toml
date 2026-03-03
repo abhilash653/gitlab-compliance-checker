@@ -9,8 +9,12 @@ readme = "README.md"
 license = { text = "GNU Affero General Public License v3.0" }
 requires-python = ">=3.11"
 dependencies = [
+  "streamlit>=1.33.0",
+  "python-dotenv>=1.0.0",
   "requests>=2.31.0",
-  "streamlit>=1.33.0"
+  "pandas>=2.0.0",
+  "python-gitlab>=4.0.0",
+  "gitlab-utils>=1.0.0"
 ]
 
 [project.optional-dependencies]
