@@ -1,5 +1,4 @@
 streamlit
-python-dotenv
 requests
 pandas
 python-gitlab

@@ -1,7 +1,6 @@
 import os
 from urllib.parse import urlparse
 import streamlit as st
-from dotenv import load_dotenv
 from gitlab import Gitlab, GitlabGetError
 from gitlab.v4.objects import Project
 from gitlab_utils.client import GitLabClient  # For user APIs only
@@ -430,7 +429,6 @@ These files help maintain consistent development environment and build configura
 
 
 # --------- Main Streamlit App ---------
-load_dotenv()
 TOKEN = st.secrets.get("GITLAB_TOKEN") or os.getenv("GITLAB_TOKEN")
 URL = st.secrets.get("GITLAB_URL") or os.getenv("GITLAB_URL")
 if not TOKEN or not URL:
