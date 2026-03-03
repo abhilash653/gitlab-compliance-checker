@@ -35,9 +35,20 @@ def main():
     # Sidebar: Config & Mode
     st.sidebar.header("Configuration")
 
-    # Credentials (allow override or from env)
-    default_url = os.getenv("GITLAB_URL", "https://gitlab.com")
-    default_token = os.getenv("GITLAB_TOKEN", "")
+    # Credentials (allow override or from env or Streamlit secrets)
+    default_url = os.getenv("GITLAB_URL")
+    if not default_url:
+        try:
+            default_url = st.secrets.get("GITLAB_URL", "https://code.swecha.org")
+        except:
+            default_url = "https://code.swecha.org"
+
+    default_token = os.getenv("GITLAB_TOKEN")
+    if not default_token:
+        try:
+            default_token = st.secrets.get("GITLAB_TOKEN", "")
+        except:
+            default_token = ""
 
     gitlab_url = st.sidebar.text_input("GitLab URL", value=default_url)
     gitlab_token = st.sidebar.text_input("GitLab Token", value=default_token, type="password")
